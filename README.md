@@ -8,7 +8,7 @@ A Python CLI tool for managing Dropbox Paper documents from the terminal — bro
 - **File Operations** — list, read, move, copy, delete, create folders, get sharing links
 - **Paper Doc Export** — read Paper documents as Markdown directly in your terminal
 - **Local Cache & Search** — sync your full Dropbox directory tree to a local SQLite database for instant keyword search (FTS5 + CJK fallback)
-- **Parallel Sync** — 20-concurrent-worker pipeline for large workspaces (tested with 59K+ items)
+- **Parallel Sync** — 20-concurrent-worker pipeline for large workspaces
 - **Team Account Support** — automatic namespace detection for Dropbox Business accounts
 - **JSON Output** — `--json` flag on all commands for scripting
 
