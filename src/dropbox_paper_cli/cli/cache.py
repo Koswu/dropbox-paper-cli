@@ -182,8 +182,6 @@ def isearch(
 ) -> None:
     """Interactive TUI search over the local metadata cache.
 
-    Requires the [tui] extra: pip install dropbox-paper-cli[tui]
-
     Key bindings:
       l  Get sharing link for selected item
       o  Open selected item in browser
@@ -195,14 +193,6 @@ def isearch(
         fmt.error("Interactive search does not support --json mode", code="INVALID_ARGUMENT")
         raise typer.Exit(code=1) from None
 
-    try:
-        from dropbox_paper_cli.tui.search import run_search_tui  # noqa: PLC0415
-    except ImportError:
-        typer.echo(
-            "The interactive search requires the 'textual' package.\n"
-            "Install it with:  pip install dropbox-paper-cli[tui]",
-            err=True,
-        )
-        raise typer.Exit(code=1) from None
+    from dropbox_paper_cli.tui.search import run_search_tui  # noqa: PLC0415
 
     run_search_tui(initial_query=query)
