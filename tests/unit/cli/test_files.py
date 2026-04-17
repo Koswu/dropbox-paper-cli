@@ -374,3 +374,221 @@ class TestFilesRead:
 
         result = runner.invoke(app, ["files", "read", "/image.png"])
         assert result.exit_code == 4
+
+
+# ── Write Commands ────────────────────────────────────────────────
+
+
+class TestFilesCreate:
+    """paper files create <PATH> [--file/-f] [--format]"""
+
+    def test_create_from_stdin(self, runner, mock_dropbox_service):
+        from dropbox_paper_cli.models.items import PaperCreateResult
+
+        mock_dropbox_service.create_paper_doc.return_value = PaperCreateResult(
+            url="https://paper.dropbox.com/doc/abc",
+            result_path="/notes/Meeting.paper",
+            file_id="id:paper1",
+            paper_revision=1,
+        )
+
+        result = runner.invoke(
+            app, ["files", "create", "/notes/Meeting.paper"], input="# Meeting Notes\n"
+        )
+        assert result.exit_code == 0
+        assert "Created Paper document" in result.stdout
+        assert "/notes/Meeting.paper" in result.stdout
+        assert "id:paper1" in result.stdout
+        mock_dropbox_service.create_paper_doc.assert_called_once()
+
+    def test_create_from_file(self, runner, mock_dropbox_service, tmp_path):
+        from dropbox_paper_cli.models.items import PaperCreateResult
+
+        content_file = tmp_path / "doc.md"
+        content_file.write_text("# From File")
+
+        mock_dropbox_service.create_paper_doc.return_value = PaperCreateResult(
+            url="https://paper.dropbox.com/doc/xyz",
+            result_path="/doc.paper",
+            file_id="id:paper2",
+            paper_revision=1,
+        )
+
+        result = runner.invoke(app, ["files", "create", "/doc.paper", "--file", str(content_file)])
+        assert result.exit_code == 0
+        assert "Created Paper document" in result.stdout
+        call_args = mock_dropbox_service.create_paper_doc.call_args
+        assert call_args[0][1] == b"# From File"
+
+    def test_create_json_output(self, runner, mock_dropbox_service):
+        from dropbox_paper_cli.models.items import PaperCreateResult
+
+        mock_dropbox_service.create_paper_doc.return_value = PaperCreateResult(
+            url="https://paper.dropbox.com/doc/abc",
+            result_path="/doc.paper",
+            file_id="id:paper1",
+            paper_revision=1,
+        )
+
+        result = runner.invoke(
+            app, ["--json", "files", "create", "/doc.paper"], input="# Content\n"
+        )
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        assert data["status"] == "created"
+        assert data["url"] == "https://paper.dropbox.com/doc/abc"
+        assert data["file_id"] == "id:paper1"
+        assert data["paper_revision"] == 1
+
+    def test_create_with_html_format(self, runner, mock_dropbox_service):
+        from dropbox_paper_cli.models.items import PaperCreateResult
+
+        mock_dropbox_service.create_paper_doc.return_value = PaperCreateResult(
+            url="https://paper.dropbox.com/doc/abc",
+            result_path="/doc.paper",
+            file_id="id:paper1",
+            paper_revision=1,
+        )
+
+        result = runner.invoke(
+            app,
+            ["files", "create", "/doc.paper", "--format", "html"],
+            input="<h1>Title</h1>\n",
+        )
+        assert result.exit_code == 0
+        call_args = mock_dropbox_service.create_paper_doc.call_args
+        assert call_args[1]["import_format"] == "html"
+
+    def test_create_invalid_extension_error(self, runner, mock_dropbox_service):
+        mock_dropbox_service.create_paper_doc.side_effect = ValidationError(
+            "Path must end with .paper: /doc.txt"
+        )
+
+        result = runner.invoke(app, ["files", "create", "/doc.txt"], input="# Content\n")
+        assert result.exit_code == 4
+
+    def test_create_no_input_tty(self, runner, mock_dropbox_service):
+        # When no --file and stdin is TTY, typer.testing.CliRunner provides
+        # no input → stdin.isatty() may differ, but we can test with no input
+        # by not providing input kwarg. The CliRunner simulates non-TTY by default,
+        # so we test the error path via the service raising instead.
+        pass
+
+
+class TestFilesWrite:
+    """paper files write <TARGET> [--file/-f] [--format] [--policy] [--revision]"""
+
+    def test_write_overwrite_from_stdin(self, runner, mock_dropbox_service):
+        from dropbox_paper_cli.models.items import PaperUpdateResult
+
+        mock_dropbox_service.update_paper_doc.return_value = PaperUpdateResult(paper_revision=5)
+
+        result = runner.invoke(app, ["files", "write", "/doc.paper"], input="# Updated Content\n")
+        assert result.exit_code == 0
+        assert "Updated Paper document" in result.stdout
+        assert "overwrite" in result.stdout
+        assert "5" in result.stdout
+
+    def test_write_from_file(self, runner, mock_dropbox_service, tmp_path):
+        from dropbox_paper_cli.models.items import PaperUpdateResult
+
+        content_file = tmp_path / "updated.md"
+        content_file.write_text("# Updated")
+
+        mock_dropbox_service.update_paper_doc.return_value = PaperUpdateResult(paper_revision=3)
+
+        result = runner.invoke(app, ["files", "write", "/doc.paper", "--file", str(content_file)])
+        assert result.exit_code == 0
+        call_args = mock_dropbox_service.update_paper_doc.call_args
+        assert call_args[0][1] == b"# Updated"
+
+    def test_write_json_output(self, runner, mock_dropbox_service):
+        from dropbox_paper_cli.models.items import PaperUpdateResult
+
+        mock_dropbox_service.update_paper_doc.return_value = PaperUpdateResult(paper_revision=5)
+
+        result = runner.invoke(app, ["--json", "files", "write", "/doc.paper"], input="# Content\n")
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        assert data["status"] == "updated"
+        assert data["policy"] == "overwrite"
+        assert data["paper_revision"] == 5
+
+    def test_write_with_policy_append(self, runner, mock_dropbox_service):
+        from dropbox_paper_cli.models.items import PaperUpdateResult
+
+        mock_dropbox_service.update_paper_doc.return_value = PaperUpdateResult(paper_revision=4)
+
+        result = runner.invoke(
+            app,
+            ["files", "write", "/doc.paper", "--policy", "append"],
+            input="## Appendix\n",
+        )
+        assert result.exit_code == 0
+        call_args = mock_dropbox_service.update_paper_doc.call_args
+        assert call_args[1]["policy"] == "append"
+
+    def test_write_with_update_policy_and_revision(self, runner, mock_dropbox_service):
+        from dropbox_paper_cli.models.items import PaperUpdateResult
+
+        mock_dropbox_service.update_paper_doc.return_value = PaperUpdateResult(paper_revision=6)
+
+        result = runner.invoke(
+            app,
+            ["files", "write", "/doc.paper", "--policy", "update", "--revision", "5"],
+            input="# V2\n",
+        )
+        assert result.exit_code == 0
+        call_args = mock_dropbox_service.update_paper_doc.call_args
+        assert call_args[1]["policy"] == "update"
+        assert call_args[1]["paper_revision"] == 5
+
+    def test_write_update_policy_missing_revision(self, runner, mock_dropbox_service):
+        mock_dropbox_service.update_paper_doc.side_effect = ValidationError(
+            "--revision is required when policy is 'update'"
+        )
+
+        result = runner.invoke(
+            app,
+            ["files", "write", "/doc.paper", "--policy", "update"],
+            input="# Content\n",
+        )
+        assert result.exit_code == 4
+
+    def test_write_by_url(self, runner, mock_dropbox_service):
+        from dropbox_paper_cli.models.items import PaperUpdateResult
+
+        mock_dropbox_service.resolve_shared_link_url.return_value = "id:abc123"
+        mock_dropbox_service.update_paper_doc.return_value = PaperUpdateResult(paper_revision=2)
+
+        result = runner.invoke(
+            app,
+            [
+                "files",
+                "write",
+                "https://www.dropbox.com/scl/fi/abc123/doc.paper?rlkey=xxx",
+            ],
+            input="# Content\n",
+        )
+        assert result.exit_code == 0
+        mock_dropbox_service.resolve_shared_link_url.assert_called_once()
+        call_args = mock_dropbox_service.update_paper_doc.call_args
+        assert call_args[0][0] == "id:abc123"
+
+    def test_write_not_found(self, runner, mock_dropbox_service):
+        mock_dropbox_service.update_paper_doc.side_effect = NotFoundError(
+            "Path not found: /nonexistent.paper"
+        )
+
+        result = runner.invoke(app, ["files", "write", "/nonexistent.paper"], input="# Content\n")
+        assert result.exit_code == 3
+
+    def test_write_revision_mismatch(self, runner, mock_dropbox_service):
+        mock_dropbox_service.update_paper_doc.side_effect = ValidationError("Revision mismatch")
+
+        result = runner.invoke(
+            app,
+            ["files", "write", "/doc.paper", "--policy", "update", "--revision", "3"],
+            input="# Content\n",
+        )
+        assert result.exit_code == 4

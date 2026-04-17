@@ -1,6 +1,10 @@
-"""Files CLI commands: list, metadata, link, read, create-folder, move, copy, delete."""
+"""Files CLI commands: list, metadata, link, read, create, write, create-folder, move, copy, delete."""
 
 from __future__ import annotations
+
+import sys
+from enum import StrEnum
+from pathlib import Path
 
 import typer
 
@@ -9,6 +13,24 @@ from dropbox_paper_cli.lib.output import OutputFormatter
 from dropbox_paper_cli.lib.url_parser import is_dropbox_url, resolve_target
 from dropbox_paper_cli.services.auth_service import AuthService
 from dropbox_paper_cli.services.dropbox_service import DropboxService
+
+
+class ImportFormat(StrEnum):
+    """Supported import formats for Paper documents."""
+
+    markdown = "markdown"
+    html = "html"
+    plain_text = "plain_text"
+
+
+class UpdatePolicy(StrEnum):
+    """Supported update policies for Paper documents."""
+
+    overwrite = "overwrite"
+    update = "update"
+    prepend = "prepend"
+    append = "append"
+
 
 files_app = typer.Typer(name="files", help="File and folder operations.", no_args_is_help=True)
 
@@ -350,6 +372,126 @@ def read(
             )
         else:
             typer.echo(content, nl=False)
+
+    except AppError as e:
+        fmt.error(str(e), code=e.code)
+        raise typer.Exit(code=e.exit_code) from None
+    except ValueError as e:
+        fmt.error(str(e), code="URL_PARSE_ERROR")
+        raise typer.Exit(code=4) from None
+    except Exception as e:
+        fmt.error(str(e), code="GENERAL_FAILURE")
+        raise typer.Exit(code=1) from None
+
+
+# ── Write Commands ────────────────────────────────────────────────
+
+
+def _read_content(file: str | None) -> bytes:
+    """Read content from a local file path or stdin.
+
+    Raises typer.Exit if stdin is a TTY and no file is given.
+    """
+    if file:
+        return Path(file).read_bytes()
+    if sys.stdin.isatty():
+        typer.echo(
+            "Error: no input provided. Pipe content via stdin or use --file/-f.",
+            err=True,
+        )
+        raise typer.Exit(code=4)
+    return sys.stdin.buffer.read()
+
+
+@files_app.command()
+def create(
+    ctx: typer.Context,
+    path: str = typer.Argument(
+        ..., help="Dropbox path for the new Paper document (must end with .paper)"
+    ),
+    file: str | None = typer.Option(
+        None, "--file", "-f", help="Read content from a local file (default: stdin)"
+    ),
+    import_format: ImportFormat = typer.Option(  # noqa: B008
+        ImportFormat.markdown, "--format", help="Import format"
+    ),
+) -> None:
+    """Create a new Paper document from Markdown, HTML, or plain text."""
+    fmt = _get_formatter(ctx)
+    try:
+        content = _read_content(file)
+        svc = _get_dropbox_service()
+        result = svc.create_paper_doc(path, content, import_format=import_format.value)
+
+        if fmt.json_mode:
+            fmt.success(
+                {
+                    "status": "created",
+                    "url": result.url,
+                    "path": result.result_path,
+                    "file_id": result.file_id,
+                    "paper_revision": result.paper_revision,
+                }
+            )
+        else:
+            typer.echo("✓ Created Paper document")
+            typer.echo(f"  Path: {result.result_path}")
+            typer.echo(f"  URL:  {result.url}")
+            typer.echo(f"  ID:   {result.file_id}")
+
+    except AppError as e:
+        fmt.error(str(e), code=e.code)
+        raise typer.Exit(code=e.exit_code) from None
+    except Exception as e:
+        fmt.error(str(e), code="GENERAL_FAILURE")
+        raise typer.Exit(code=1) from None
+
+
+@files_app.command()
+def write(
+    ctx: typer.Context,
+    target: str = typer.Argument(..., help="File ID, path, or Dropbox Paper URL"),
+    file: str | None = typer.Option(
+        None, "--file", "-f", help="Read content from a local file (default: stdin)"
+    ),
+    import_format: ImportFormat = typer.Option(  # noqa: B008
+        ImportFormat.markdown, "--format", help="Import format"
+    ),
+    policy: UpdatePolicy = typer.Option(  # noqa: B008
+        UpdatePolicy.overwrite, "--policy", help="Update policy"
+    ),
+    revision: int | None = typer.Option(
+        None, "--revision", help="Paper revision (required for --policy update)"
+    ),
+) -> None:
+    """Update an existing Paper document's content."""
+    fmt = _get_formatter(ctx)
+    try:
+        content = _read_content(file)
+        svc = _get_dropbox_service()
+        resolved = _resolve(target, svc)
+        result = svc.update_paper_doc(
+            resolved,
+            content,
+            import_format=import_format.value,
+            policy=policy.value,
+            paper_revision=revision,
+        )
+
+        if fmt.json_mode:
+            fmt.success(
+                {
+                    "status": "updated",
+                    "target": resolved,
+                    "policy": policy.value,
+                    "paper_revision": result.paper_revision,
+                }
+            )
+        else:
+            typer.echo("✓ Updated Paper document")
+            typer.echo(f"  Target:   {resolved}")
+            typer.echo(f"  Policy:   {policy.value}")
+            typer.echo(f"  Revision: {result.paper_revision}")
 
     except AppError as e:
         fmt.error(str(e), code=e.code)

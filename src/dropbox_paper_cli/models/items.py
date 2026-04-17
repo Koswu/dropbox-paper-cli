@@ -84,3 +84,20 @@ class PaperDocument(DropboxItem):
     """A DropboxItem that is a Paper document, with optional markdown content."""
 
     content_markdown: str | None = None
+
+
+@dataclass
+class PaperCreateResult:
+    """Result of creating a new Paper document via the v2 API."""
+
+    url: str
+    result_path: str
+    file_id: str
+    paper_revision: int
+
+
+@dataclass
+class PaperUpdateResult:
+    """Result of updating an existing Paper document via the v2 API."""
+
+    paper_revision: int
