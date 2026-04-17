@@ -2,23 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import typer
 
 from dropbox_paper_cli.cli.common import get_formatter as _get_formatter
+from dropbox_paper_cli.cli.common import get_http_client as _get_http_client
 from dropbox_paper_cli.cli.common import safe_command
 from dropbox_paper_cli.lib.url_parser import is_dropbox_url, resolve_target
-from dropbox_paper_cli.services.auth_service import AuthService
 from dropbox_paper_cli.services.dropbox_service import DropboxService
 from dropbox_paper_cli.services.sharing_service import SharingService
 
 sharing_app = typer.Typer(name="sharing", help="Sharing information.", no_args_is_help=True)
 
 
-def _get_services() -> tuple[DropboxService, SharingService]:
-    """Get DropboxService and SharingService with an authenticated client. Patched in tests."""
-    svc = AuthService()
-    client = svc.get_client()
-    return DropboxService(client=client), SharingService(client=client)
+def _get_services():
+    """Get HTTP client for test patching."""
+    return _get_http_client()
 
 
 @sharing_app.command()
@@ -29,44 +29,51 @@ def info(
     """Get sharing information for a shared folder."""
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
-        fmt.verbose(f"Getting sharing info for {target!r}")
-        dbx_svc, share_svc = _get_services()
-        resolved = resolve_target(target)
-        if is_dropbox_url(resolved):
-            fmt.verbose(f"Resolving shared link URL: {resolved!r}")
-            resolved = dbx_svc.resolve_shared_link_url(resolved)
-        fmt.verbose(f"Resolved to {resolved!r}")
 
-        # Get the shared_folder_id from folder metadata
-        shared_folder_id = dbx_svc.get_shared_folder_id(resolved)
-        if shared_folder_id is None:
-            from dropbox_paper_cli.lib.errors import ValidationError
+        async def _run() -> None:
+            fmt.verbose(f"Getting sharing info for {target!r}")
+            client = _get_services()
+            async with client:
+                dbx_svc = DropboxService(client=client)
+                share_svc = SharingService(client=client)
 
-            raise ValidationError(f"Target is not a shared folder: {resolved}")
+                resolved = resolve_target(target)
+                if is_dropbox_url(resolved):
+                    fmt.verbose(f"Resolving shared link URL: {resolved!r}")
+                    resolved = await dbx_svc.resolve_shared_link_url(resolved)
+                fmt.verbose(f"Resolved to {resolved!r}")
 
-        sharing_info = share_svc.get_sharing_info(shared_folder_id)
+                shared_folder_id = await dbx_svc.get_shared_folder_id(resolved)
+                if shared_folder_id is None:
+                    from dropbox_paper_cli.lib.errors import ValidationError
 
-        if fmt.json_mode:
-            fmt.success(
-                {
-                    "shared_folder_id": sharing_info.shared_folder_id,
-                    "name": sharing_info.name,
-                    "members": [
-                        {
-                            "display_name": m.display_name,
-                            "email": m.email,
-                            "access_type": m.access_type,
-                        }
-                        for m in sharing_info.members
-                    ],
-                }
-            )
-        else:
-            typer.echo(f"Shared Folder: {sharing_info.name}")
-            typer.echo(f"Folder ID:     {sharing_info.shared_folder_id}")
-            typer.echo("")
-            typer.echo("Members:")
-            for m in sharing_info.members:
-                typer.echo(
-                    f"  {m.display_name} ({m.email})  {' ' * max(0, 25 - len(m.display_name) - len(m.email))}{m.access_type}"
+                    raise ValidationError(f"Target is not a shared folder: {resolved}")
+
+                sharing_info = await share_svc.get_sharing_info(shared_folder_id)
+
+            if fmt.json_mode:
+                fmt.success(
+                    {
+                        "shared_folder_id": sharing_info.shared_folder_id,
+                        "name": sharing_info.name,
+                        "members": [
+                            {
+                                "display_name": m.display_name,
+                                "email": m.email,
+                                "access_type": m.access_type,
+                            }
+                            for m in sharing_info.members
+                        ],
+                    }
                 )
+            else:
+                typer.echo(f"Shared Folder: {sharing_info.name}")
+                typer.echo(f"Folder ID:     {sharing_info.shared_folder_id}")
+                typer.echo("")
+                typer.echo("Members:")
+                for m in sharing_info.members:
+                    typer.echo(
+                        f"  {m.display_name} ({m.email})  {' ' * max(0, 25 - len(m.display_name) - len(m.email))}{m.access_type}"
+                    )
+
+        asyncio.run(_run())

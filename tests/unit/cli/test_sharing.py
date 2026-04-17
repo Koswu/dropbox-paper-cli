@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -20,11 +20,34 @@ def runner():
 
 @pytest.fixture
 def mock_services():
-    """Patch the services factory used by sharing CLI commands."""
-    with patch("dropbox_paper_cli.cli.sharing._get_services") as mock_get:
-        dbx_svc = MagicMock()
-        share_svc = MagicMock()
-        mock_get.return_value = (dbx_svc, share_svc)
+    """Patch the HTTP client and services used by async sharing CLI commands.
+
+    The CLI commands now use this pattern:
+        client = _get_services()
+        async with client:
+            dbx_svc = DropboxService(client=client)
+            share_svc = SharingService(client=client)
+            result = await dbx_svc.some_method(...)
+    We patch _get_services to return an async-context-manager mock,
+    and patch DropboxService / SharingService constructors to return
+    shared mock services whose methods are AsyncMock.
+    """
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    dbx_svc = MagicMock()
+    dbx_svc.get_shared_folder_id = AsyncMock()
+    dbx_svc.resolve_shared_link_url = AsyncMock()
+
+    share_svc = MagicMock()
+    share_svc.get_sharing_info = AsyncMock()
+
+    with (
+        patch("dropbox_paper_cli.cli.sharing._get_services", return_value=mock_client),
+        patch("dropbox_paper_cli.cli.sharing.DropboxService", return_value=dbx_svc),
+        patch("dropbox_paper_cli.cli.sharing.SharingService", return_value=share_svc),
+    ):
         yield dbx_svc, share_svc
 
 

@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable
-
-import dropbox
+from typing import TYPE_CHECKING
 
 from dropbox_paper_cli.models.cache import CachedMetadata, SyncResult
 from dropbox_paper_cli.services.sync_orchestrator import (
@@ -13,6 +11,9 @@ from dropbox_paper_cli.services.sync_orchestrator import (
     ProgressCallback,
     SyncOrchestrator,
 )
+
+if TYPE_CHECKING:
+    from dropbox_paper_cli.lib.http_client import DropboxHttpClient
 
 
 class CacheService:
@@ -25,17 +26,14 @@ class CacheService:
     def __init__(
         self,
         conn: sqlite3.Connection,
-        client: dropbox.Dropbox,
-        *,
-        client_factory: Callable[[], dropbox.Dropbox] | None = None,
+        client: DropboxHttpClient,
     ) -> None:
         self._conn = conn
-        self._dbx = client
-        self._client_factory = client_factory
+        self._client = client
 
     # ── Sync Operations ───────────────────────────────────────────
 
-    def sync(
+    async def sync(
         self,
         *,
         force_full: bool = False,
@@ -47,8 +45,8 @@ class CacheService:
 
         Delegates to SyncOrchestrator for parallel folder listing.
         """
-        orchestrator = SyncOrchestrator(self._conn, self._dbx, client_factory=self._client_factory)
-        return orchestrator.sync(
+        orchestrator = SyncOrchestrator(self._conn, self._client)
+        return await orchestrator.sync(
             force_full=force_full,
             path=path,
             concurrency=concurrency,

@@ -1,15 +1,14 @@
-"""Tests for DropboxItem and PaperDocument dataclasses including SDK metadata mapping."""
+"""Tests for DropboxItem and PaperDocument dataclasses including API response mapping."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
 
 from dropbox_paper_cli.models.items import DropboxItem, PaperDocument
 
 
 class TestDropboxItem:
-    """DropboxItem holds file/folder metadata from the Dropbox SDK."""
+    """DropboxItem holds file/folder metadata from the Dropbox API."""
 
     def test_file_item_creation(self):
         item = DropboxItem(
@@ -61,33 +60,35 @@ class TestDropboxItem:
         assert non_paper.is_paper is False
 
     def test_from_file_metadata(self):
-        """from_sdk creates a DropboxItem from dropbox.files.FileMetadata."""
-        mock_meta = MagicMock()
-        mock_meta.__class__.__name__ = "FileMetadata"
-        mock_meta.id = "id:f1"
-        mock_meta.name = "Report.paper"
-        mock_meta.path_display = "/Report.paper"
-        mock_meta.path_lower = "/report.paper"
-        mock_meta.size = 5000
-        mock_meta.server_modified = datetime(2025, 7, 18, tzinfo=UTC)
-        mock_meta.rev = "abc"
-        mock_meta.content_hash = "hash1"
+        """from_api creates a DropboxItem from a Dropbox API JSON dict (file)."""
+        api_dict = {
+            ".tag": "file",
+            "id": "id:f1",
+            "name": "Report.paper",
+            "path_display": "/Report.paper",
+            "path_lower": "/report.paper",
+            "size": 5000,
+            "server_modified": "2025-07-18T00:00:00Z",
+            "rev": "abc",
+            "content_hash": "hash1",
+        }
 
-        item = DropboxItem.from_sdk(mock_meta)
+        item = DropboxItem.from_api(api_dict)
         assert item.id == "id:f1"
         assert item.type == "file"
         assert item.size == 5000
 
     def test_from_folder_metadata(self):
-        """from_sdk creates a DropboxItem from dropbox.files.FolderMetadata."""
-        mock_meta = MagicMock()
-        mock_meta.__class__.__name__ = "FolderMetadata"
-        mock_meta.id = "id:d1"
-        mock_meta.name = "Docs"
-        mock_meta.path_display = "/Docs"
-        mock_meta.path_lower = "/docs"
+        """from_api creates a DropboxItem from a Dropbox API JSON dict (folder)."""
+        api_dict = {
+            ".tag": "folder",
+            "id": "id:d1",
+            "name": "Docs",
+            "path_display": "/Docs",
+            "path_lower": "/docs",
+        }
 
-        item = DropboxItem.from_sdk(mock_meta)
+        item = DropboxItem.from_api(api_dict)
         assert item.id == "id:d1"
         assert item.type == "folder"
         assert item.size is None

@@ -1,21 +1,38 @@
-"""Auth service: OAuth2 PKCE/AuthCode flows, token CRUD, auto-refresh client."""
+"""Auth service: OAuth2 PKCE/AuthCode flows, token CRUD, async HTTP client factory."""
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
+import secrets
 import tempfile
 import time
-from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlencode
 
-import dropbox
-import dropbox.common
-from dropbox.oauth import DropboxOAuth2FlowNoRedirect
+import httpx
 
 from dropbox_paper_cli.lib.config import CONFIG_DIR, TOKEN_PATH, get_app_key, get_app_secret
 from dropbox_paper_cli.lib.errors import AuthenticationError
+from dropbox_paper_cli.lib.http_client import DropboxHttpClient
 from dropbox_paper_cli.models.auth import AuthToken
+
+_AUTH_BASE_URL = "https://www.dropbox.com/oauth2/authorize"
+_TOKEN_URL = "https://api.dropboxapi.com/oauth2/token"
+
+
+def _generate_pkce_pair() -> tuple[str, str]:
+    """Generate a PKCE code_verifier and code_challenge (S256).
+
+    Returns:
+        (code_verifier, code_challenge) tuple.
+    """
+    verifier = secrets.token_urlsafe(96)[:128]  # 43–128 chars
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
 
 
 class AuthService:
@@ -25,7 +42,7 @@ class AuthService:
     - PKCE flow (no server required, recommended for CLI)
     - Authorization Code flow (for environments with redirect server)
     - Secure token storage with atomic writes and 0600 permissions
-    - Auto-refresh via Dropbox SDK
+    - DropboxHttpClient factory with auto token refresh
     """
 
     def __init__(
@@ -38,56 +55,82 @@ class AuthService:
         self._config_dir = config_dir or CONFIG_DIR
         self._token_path = token_path or TOKEN_PATH
         self._app_key = app_key or get_app_key()
-        self._flow: DropboxOAuth2FlowNoRedirect | None = None
-        self._cached_path_root: dropbox.common.PathRoot | None = None
-        self._ns_detected: bool = False
+        self._code_verifier: str | None = None
+        self._flow_type: str | None = None
 
     # ── OAuth2 Flows ──────────────────────────────────────────────
 
     def start_pkce_flow(self) -> str:
         """Start OAuth2 PKCE flow. Returns the authorization URL."""
-        self._flow = DropboxOAuth2FlowNoRedirect(
-            consumer_key=self._app_key,
-            use_pkce=True,
-            token_access_type="offline",
-        )
-        return self._flow.start()
+        verifier, challenge = _generate_pkce_pair()
+        self._code_verifier = verifier
+        self._flow_type = "pkce"
+        params = {
+            "client_id": self._app_key,
+            "response_type": "code",
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "token_access_type": "offline",
+        }
+        return f"{_AUTH_BASE_URL}?{urlencode(params)}"
 
     def start_auth_code_flow(self) -> str:
         """Start OAuth2 Authorization Code flow. Returns the authorization URL."""
         app_secret = get_app_secret()
-        self._flow = DropboxOAuth2FlowNoRedirect(
-            consumer_key=self._app_key,
-            consumer_secret=app_secret or None,
-            use_pkce=not bool(app_secret),
-            token_access_type="offline",
-        )
-        return self._flow.start()
+        if app_secret:
+            self._flow_type = "auth_code"
+        else:
+            # Fall back to PKCE
+            return self.start_pkce_flow()
+        params = {
+            "client_id": self._app_key,
+            "response_type": "code",
+            "token_access_type": "offline",
+        }
+        return f"{_AUTH_BASE_URL}?{urlencode(params)}"
 
-    def finish_flow(self, auth_code: str) -> AuthToken:
+    async def finish_flow(self, auth_code: str) -> AuthToken:
         """Complete the OAuth2 flow with the authorization code.
 
         Returns the AuthToken with access and refresh tokens.
         """
-        if self._flow is None:
+        if self._flow_type is None:
             raise AuthenticationError(
                 "No OAuth2 flow in progress. Call start_pkce_flow() or start_auth_code_flow() first.",
                 code="AUTH_REQUIRED",
             )
-        result = self._flow.finish(auth_code.strip())
-        # SDK returns expires_at as a datetime object (or None)
-        if result.expires_at and isinstance(result.expires_at, datetime):
-            expires_at = result.expires_at.timestamp()
-        elif result.expires_at:
-            expires_at = float(result.expires_at)
-        else:
-            expires_at = time.time() + 14400  # default 4 hours
+        data: dict = {
+            "code": auth_code.strip(),
+            "grant_type": "authorization_code",
+            "client_id": self._app_key,
+        }
+        if self._flow_type == "pkce" and self._code_verifier:
+            data["code_verifier"] = self._code_verifier
+        elif self._flow_type == "auth_code":
+            app_secret = get_app_secret()
+            if app_secret:
+                data["client_secret"] = app_secret
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(_TOKEN_URL, data=data)
+
+        if response.status_code != 200:
+            try:
+                body = response.json()
+                msg = body.get("error_description", body.get("error", response.text))
+            except Exception:
+                msg = response.text
+            raise AuthenticationError(f"Token exchange failed: {msg}")
+
+        result = response.json()
+        expires_in = result.get("expires_in", 14400)
         token = AuthToken(
-            access_token=result.access_token,
-            refresh_token=result.refresh_token,
-            expires_at=expires_at,
-            account_id=result.account_id,
-            uid=getattr(result, "user_id", None),
+            access_token=result["access_token"],
+            refresh_token=result["refresh_token"],
+            expires_at=time.time() + expires_in,
+            account_id=result.get("account_id", ""),
+            uid=result.get("uid"),
+            token_type=result.get("token_type", "bearer"),
         )
         return token
 
@@ -96,12 +139,10 @@ class AuthService:
     def save_token(self, token: AuthToken) -> None:
         """Persist token to disk with atomic write and 0600 permissions."""
         self._config_dir.mkdir(parents=True, exist_ok=True)
-        # Set directory permissions to 0700
         os.chmod(self._config_dir, 0o700)
 
         data = json.dumps(token.to_dict(), indent=2)
 
-        # Atomic write: write to temp file, then rename
         fd, tmp_path = tempfile.mkstemp(dir=self._config_dir, prefix=".tokens_", suffix=".tmp")
         try:
             os.write(fd, data.encode())
@@ -129,19 +170,15 @@ class AuthService:
         if self._token_path.exists():
             self._token_path.unlink()
 
-    # ── Dropbox Client ────────────────────────────────────────────
+    # ── HTTP Client Factory ───────────────────────────────────────
 
-    def get_client(self, *, timeout: int | None = 30) -> dropbox.Dropbox:
-        """Get a Dropbox SDK client using stored token (with auto-refresh).
+    def get_http_client(self) -> DropboxHttpClient:
+        """Create a DropboxHttpClient using stored token.
 
-        For team accounts, automatically sets path_root to the team root
-        namespace so all files (including team members' shared docs) are
-        accessible. Namespace info is persisted in the token file to avoid
-        an API call on every invocation.
+        The client is configured with auto-refresh via the token_persister.
 
-        Args:
-            timeout: Request timeout in seconds. Defaults to 30s.
-                     Pass None for SDK default (100s).
+        Returns:
+            DropboxHttpClient ready for use as async context manager.
 
         Raises:
             AuthenticationError: If no token is stored.
@@ -152,79 +189,62 @@ class AuthService:
                 "Not authenticated. Run 'paper auth login' first.",
                 code="AUTH_REQUIRED",
             )
-        kwargs: dict = {
-            "oauth2_access_token": token.access_token,
-            "oauth2_refresh_token": token.refresh_token,
-            "app_key": self._app_key,
-        }
-        if timeout is not None:
-            kwargs["timeout"] = timeout
-        dbx = dropbox.Dropbox(**kwargs)
+        return DropboxHttpClient(
+            token=token,
+            app_key=self._app_key,
+            token_persister=self.save_token,
+        )
 
-        if not self._ns_detected:
-            # Try cached namespace from token file first (no API call)
-            if token.root_namespace_id and token.home_namespace_id:
-                if token.root_namespace_id != token.home_namespace_id:
-                    self._cached_path_root = dropbox.common.PathRoot.root(token.root_namespace_id)
-                self._ns_detected = True
-            else:
-                # First-time detection — use a short timeout to avoid blocking CLI
-                try:
-                    detect_dbx = dropbox.Dropbox(
-                        oauth2_access_token=token.access_token,
-                        oauth2_refresh_token=token.refresh_token,
-                        app_key=self._app_key,
-                        timeout=10,
-                    )
-                    account = detect_dbx.users_get_current_account()
-                    root_info = account.root_info
-                    root_ns = root_info.root_namespace_id
-                    home_ns = root_info.home_namespace_id
-                    if root_ns != home_ns:
-                        self._cached_path_root = dropbox.common.PathRoot.root(root_ns)
-                    # Persist namespace info + refreshed token
-                    self._persist_refreshed_token(
-                        detect_dbx, token, root_ns=root_ns, home_ns=home_ns
-                    )
-                except Exception:
-                    pass
-                self._ns_detected = True
+    async def get_account_info(self) -> dict:
+        """Fetch the current user's account info via the API.
 
-        if self._cached_path_root is not None:
-            dbx = dbx.with_path_root(self._cached_path_root)
-        return dbx
+        Returns:
+            Dict with account_id, display_name, email.
+        """
+        client = self.get_http_client()
+        async with client:
+            result = await client.rpc("users/get_current_account")
+            name = result.get("name", {})
+            return {
+                "account_id": result.get("account_id", ""),
+                "display_name": name.get("display_name", ""),
+                "email": result.get("email", ""),
+            }
 
-    def _persist_refreshed_token(
-        self,
-        dbx: dropbox.Dropbox,
-        original: AuthToken,
-        *,
-        root_ns: str | None = None,
-        home_ns: str | None = None,
-    ) -> None:
-        """Persist refreshed access token and/or namespace info."""
-        new_access = getattr(dbx, "_oauth2_access_token", None)
-        access_changed = new_access and new_access != original.access_token
-        ns_changed = root_ns and root_ns != original.root_namespace_id
+    async def detect_and_cache_namespace(self) -> None:
+        """Detect team/personal namespace and persist to token.
 
-        if not access_changed and not ns_changed:
+        For team accounts, this caches root_namespace_id and home_namespace_id
+        in the token file so DropboxHttpClient can set the path-root header.
+        """
+        token = self.load_token()
+        if token is None:
             return
+        if token.root_namespace_id and token.home_namespace_id:
+            return  # Already cached
 
-        new_expiry = getattr(dbx, "_oauth2_access_token_expiration", None)
-        expires_at = (
-            new_expiry.timestamp() if (new_expiry and access_changed) else original.expires_at
-        )
-        self.save_token(
-            AuthToken(
-                access_token=new_access
-                if (access_changed and new_access)
-                else original.access_token,
-                refresh_token=original.refresh_token,
-                account_id=original.account_id,
-                expires_at=expires_at,
-                uid=original.uid,
-                token_type=original.token_type,
-                root_namespace_id=root_ns or original.root_namespace_id,
-                home_namespace_id=home_ns or original.home_namespace_id,
+        try:
+            client = DropboxHttpClient(
+                token=token,
+                app_key=self._app_key,
+                token_persister=self.save_token,
             )
-        )
+            async with client:
+                result = await client.rpc("users/get_current_account")
+                root_info = result.get("root_info", {})
+                root_ns = root_info.get("root_namespace_id")
+                home_ns = root_info.get("home_namespace_id")
+                if root_ns:
+                    updated = AuthToken(
+                        access_token=client._token.access_token,
+                        refresh_token=client._token.refresh_token,
+                        expires_at=client._token.expires_at,
+                        account_id=client._token.account_id,
+                        uid=client._token.uid,
+                        token_type=client._token.token_type,
+                        root_namespace_id=root_ns,
+                        home_namespace_id=home_ns,
+                    )
+                    self.save_token(updated)
+        except Exception:
+            pass
