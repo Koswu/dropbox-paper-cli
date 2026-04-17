@@ -98,9 +98,21 @@ def status(ctx: typer.Context) -> None:
             typer.echo("Not authenticated. Run 'paper auth login' to connect.")
         return
 
+    fmt.verbose("Token loaded from disk")
+    fmt.verbose(f"  Account ID: {token.account_id}")
+    fmt.verbose(f"  Token expired: {token.is_expired}")
+    if token.root_namespace_id:
+        fmt.verbose(
+            f"  Cached namespace: root={token.root_namespace_id} home={token.home_namespace_id}"
+        )
+    else:
+        fmt.verbose("  Namespace not cached (will detect on first API call)")
+
     try:
+        fmt.verbose("Verifying token with Dropbox API...")
         client = svc.get_client()
         account = client.users_get_current_account()
+        fmt.verbose("API verification successful")
 
         # Reload token — get_client() may have persisted a refreshed access token
         token = svc.load_token() or token
@@ -121,7 +133,8 @@ def status(ctx: typer.Context) -> None:
             typer.echo(f"Account ID: {token.account_id}")
             typer.echo(f"Token expires: {expires_str}")
 
-    except Exception:
+    except Exception as exc:
+        fmt.verbose(f"API verification failed: {exc}")
         # Token exists but can't connect — show what we have
         if fmt.json_mode:
             fmt.success(
