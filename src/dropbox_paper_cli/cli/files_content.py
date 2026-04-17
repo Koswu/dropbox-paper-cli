@@ -55,11 +55,14 @@ def read(
     """Read and output Paper document content as Markdown."""
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
+        fmt.verbose(f"Reading document {target!r}")
         svc = _files._get_dropbox_service()
         resolved = _files._resolve(target, svc)
+        fmt.verbose(f"Resolved to {resolved!r}")
 
         # Get metadata for name/path info
         item = svc.get_metadata(resolved)
+        fmt.verbose(f"Exporting content for {item.name!r}")
         content = svc.export_paper_content(resolved)
 
         if fmt.json_mode:
@@ -93,6 +96,9 @@ def create(
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
         content = _read_content(file)
+        fmt.verbose(
+            f"Creating document at {path!r} format={import_format.value} ({len(content)} bytes)"
+        )
         svc = _files._get_dropbox_service()
         result = svc.create_paper_doc(path, content, import_format=import_format.value)
 
@@ -134,8 +140,12 @@ def write(
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
         content = _read_content(file)
+        fmt.verbose(
+            f"Updating {target!r} format={import_format.value} policy={policy.value} ({len(content)} bytes)"
+        )
         svc = _files._get_dropbox_service()
         resolved = _files._resolve(target, svc)
+        fmt.verbose(f"Resolved to {resolved!r}")
         result = svc.update_paper_doc(
             resolved,
             content,

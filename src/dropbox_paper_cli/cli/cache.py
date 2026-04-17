@@ -65,6 +65,7 @@ def sync(
     """Sync the Dropbox directory tree metadata to the local SQLite cache."""
     fmt = _get_formatter(ctx)
     with safe_command(fmt), CacheDatabase() as db:
+        fmt.verbose(f"Sync path={path!r} full={full} concurrency={concurrency}")
         svc = _get_cache_service(db)
 
         is_tty = sys.stderr.isatty()
@@ -80,6 +81,10 @@ def sync(
             on_progress=on_progress,
         )
         finalize()
+        fmt.verbose(
+            f"Sync done: type={result.sync_type} added={result.added} "
+            f"updated={result.updated} removed={result.removed} ({result.duration_seconds}s)"
+        )
 
         if fmt.json_mode:
             fmt.success(
@@ -114,12 +119,14 @@ def search(
     """Search file and folder names in the local cache by keyword."""
     fmt = _get_formatter(ctx)
     with safe_command(fmt), CacheDatabase() as db:
+        fmt.verbose(f"Searching query={query!r} type={item_type} limit={limit}")
         # Search doesn't need a Dropbox client — just use the DB directly
         from dropbox_paper_cli.services.cache_service import CacheService
 
         # Create a service with a dummy client for search-only
         svc = CacheService(conn=db.conn, client=None)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         results = svc.search(query, item_type=item_type, limit=limit)
+        fmt.verbose(f"Found {len(results)} results")
 
         if fmt.json_mode:
             fmt.success(
