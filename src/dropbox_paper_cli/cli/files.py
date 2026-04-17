@@ -8,10 +8,10 @@ from pathlib import Path
 
 import typer
 
+from dropbox_paper_cli.cli.common import get_dropbox_service as _get_dropbox_service
+from dropbox_paper_cli.cli.common import get_formatter as _get_formatter
 from dropbox_paper_cli.lib.errors import AppError
-from dropbox_paper_cli.lib.output import OutputFormatter
 from dropbox_paper_cli.lib.url_parser import is_dropbox_url, resolve_target
-from dropbox_paper_cli.services.auth_service import AuthService
 from dropbox_paper_cli.services.dropbox_service import DropboxService
 
 
@@ -35,29 +35,12 @@ class UpdatePolicy(StrEnum):
 files_app = typer.Typer(name="files", help="File and folder operations.", no_args_is_help=True)
 
 
-def _get_dropbox_service() -> DropboxService:
-    """Get a DropboxService with an authenticated client. Patched in tests."""
-    svc = AuthService()
-    client = svc.get_client()
-    return DropboxService(client=client)
-
-
 def _resolve(target: str, svc: DropboxService) -> str:
     """Resolve target — if it's a URL, use SDK to get the real ID."""
     resolved = resolve_target(target)
     if is_dropbox_url(resolved):
         return svc.resolve_shared_link_url(resolved)
     return resolved
-
-
-def _get_formatter(ctx: typer.Context) -> OutputFormatter:
-    """Build an OutputFormatter from the root context's global flags."""
-    current = ctx
-    while current.parent is not None:
-        current = current.parent
-    json_mode = current.params.get("json_output", False)
-    verbose = current.params.get("verbose", False)
-    return OutputFormatter(json_mode=json_mode, verbose=verbose)
 
 
 # ── Browse Commands (US2) ─────────────────────────────────────────

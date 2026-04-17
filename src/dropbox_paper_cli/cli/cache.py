@@ -7,11 +7,11 @@ from collections.abc import Callable
 
 import typer
 
+from dropbox_paper_cli.cli.common import get_auth_service as _get_auth_service
+from dropbox_paper_cli.cli.common import get_formatter as _get_formatter
 from dropbox_paper_cli.db.connection import CacheDatabase
 from dropbox_paper_cli.lib.errors import AppError
-from dropbox_paper_cli.lib.output import OutputFormatter
 from dropbox_paper_cli.models.cache import SyncResult
-from dropbox_paper_cli.services.auth_service import AuthService
 from dropbox_paper_cli.services.cache_service import CacheService
 
 cache_app = typer.Typer(name="cache", help="Local metadata cache and search.", no_args_is_help=True)
@@ -19,23 +19,13 @@ cache_app = typer.Typer(name="cache", help="Local metadata cache and search.", n
 
 def _get_cache_service(db: CacheDatabase) -> CacheService:
     """Get a CacheService with an authenticated client. Patched in tests."""
-    svc = AuthService()
+    svc = _get_auth_service()
     client = svc.get_client()
 
     def client_factory():
         return svc.get_client()
 
     return CacheService(conn=db.conn, client=client, client_factory=client_factory)
-
-
-def _get_formatter(ctx: typer.Context) -> OutputFormatter:
-    """Build an OutputFormatter from the root context's global flags."""
-    current = ctx
-    while current.parent is not None:
-        current = current.parent
-    json_mode = current.params.get("json_output", False)
-    verbose = current.params.get("verbose", False)
-    return OutputFormatter(json_mode=json_mode, verbose=verbose)
 
 
 def _make_progress_callback(
