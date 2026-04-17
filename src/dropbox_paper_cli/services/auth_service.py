@@ -131,7 +131,7 @@ class AuthService:
 
     # ── Dropbox Client ────────────────────────────────────────────
 
-    def get_client(self, *, timeout: int | None = None) -> dropbox.Dropbox:
+    def get_client(self, *, timeout: int | None = 30) -> dropbox.Dropbox:
         """Get a Dropbox SDK client using stored token (with auto-refresh).
 
         For team accounts, automatically sets path_root to the team root
@@ -140,7 +140,8 @@ class AuthService:
         an API call on every invocation.
 
         Args:
-            timeout: Request timeout in seconds. None uses SDK default (100s).
+            timeout: Request timeout in seconds. Defaults to 30s.
+                     Pass None for SDK default (100s).
 
         Raises:
             AuthenticationError: If no token is stored.
