@@ -131,15 +131,16 @@ class AuthService:
 
     # ── Dropbox Client ────────────────────────────────────────────
 
-    def get_client(self, *, timeout: int | None = 5) -> dropbox.Dropbox:
+    def get_client(self, *, timeout: int | None = None) -> dropbox.Dropbox:
         """Get a Dropbox SDK client using stored token (with auto-refresh).
 
         For team accounts, automatically sets path_root to the team root
         namespace so all files (including team members' shared docs) are
-        accessible. Namespace detection is cached after the first call.
+        accessible. Namespace info is persisted in the token file to avoid
+        an API call on every invocation.
 
         Args:
-            timeout: Request timeout in seconds. Defaults to 5s.
+            timeout: Request timeout in seconds. None uses SDK default (100s).
 
         Raises:
             AuthenticationError: If no token is stored.
@@ -158,37 +159,71 @@ class AuthService:
         if timeout is not None:
             kwargs["timeout"] = timeout
         dbx = dropbox.Dropbox(**kwargs)
-        # Detect team account (once) and set path_root to team root namespace
+
         if not self._ns_detected:
-            try:
-                account = dbx.users_get_current_account()
-                root_info = account.root_info
-                root_ns = root_info.root_namespace_id
-                home_ns = root_info.home_namespace_id
-                if root_ns != home_ns:
-                    self._cached_path_root = dropbox.common.PathRoot.root(root_ns)
-                # Persist refreshed token (SDK may have auto-refreshed)
-                self._persist_refreshed_token(dbx, token)
-            except Exception:
-                pass
-            self._ns_detected = True
+            # Try cached namespace from token file first (no API call)
+            if token.root_namespace_id and token.home_namespace_id:
+                if token.root_namespace_id != token.home_namespace_id:
+                    self._cached_path_root = dropbox.common.PathRoot.root(token.root_namespace_id)
+                self._ns_detected = True
+            else:
+                # First-time detection — use a short timeout to avoid blocking CLI
+                try:
+                    detect_dbx = dropbox.Dropbox(
+                        oauth2_access_token=token.access_token,
+                        oauth2_refresh_token=token.refresh_token,
+                        app_key=self._app_key,
+                        timeout=10,
+                    )
+                    account = detect_dbx.users_get_current_account()
+                    root_info = account.root_info
+                    root_ns = root_info.root_namespace_id
+                    home_ns = root_info.home_namespace_id
+                    if root_ns != home_ns:
+                        self._cached_path_root = dropbox.common.PathRoot.root(root_ns)
+                    # Persist namespace info + refreshed token
+                    self._persist_refreshed_token(
+                        detect_dbx, token, root_ns=root_ns, home_ns=home_ns
+                    )
+                except Exception:
+                    pass
+                self._ns_detected = True
 
         if self._cached_path_root is not None:
             dbx = dbx.with_path_root(self._cached_path_root)
         return dbx
 
-    def _persist_refreshed_token(self, dbx: dropbox.Dropbox, original: AuthToken) -> None:
-        """If the SDK auto-refreshed the access token, save the updated values."""
+    def _persist_refreshed_token(
+        self,
+        dbx: dropbox.Dropbox,
+        original: AuthToken,
+        *,
+        root_ns: str | None = None,
+        home_ns: str | None = None,
+    ) -> None:
+        """Persist refreshed access token and/or namespace info."""
         new_access = getattr(dbx, "_oauth2_access_token", None)
-        if not new_access or new_access == original.access_token:
+        access_changed = new_access and new_access != original.access_token
+        ns_changed = root_ns and root_ns != original.root_namespace_id
+
+        if not access_changed and not ns_changed:
             return
+
         new_expiry = getattr(dbx, "_oauth2_access_token_expiration", None)
-        expires_at = new_expiry.timestamp() if new_expiry else original.expires_at
+        expires_at = (
+            new_expiry.timestamp() if (new_expiry and access_changed) else original.expires_at
+        )
         self.save_token(
             AuthToken(
-                access_token=new_access,
+                access_token=new_access
+                if (access_changed and new_access)
+                else original.access_token,
                 refresh_token=original.refresh_token,
                 account_id=original.account_id,
                 expires_at=expires_at,
+                uid=original.uid,
+                token_type=original.token_type,
+                root_namespace_id=root_ns or original.root_namespace_id,
+                home_namespace_id=home_ns or original.home_namespace_id,
             )
         )

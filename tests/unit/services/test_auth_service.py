@@ -137,7 +137,27 @@ class TestGetDropboxClient:
         auth_service.save_token(sample_token)
         client = auth_service.get_client()
         assert client is not None
+        # Main client + separate detection client (short timeout for namespace detection)
+        assert mock_dbx_cls.call_count == 2
+
+    @patch("dropbox_paper_cli.services.auth_service.dropbox.Dropbox")
+    def test_get_client_cached_namespace_skips_api_call(self, mock_dbx_cls, auth_service):
+        """When namespace info is cached in the token, no detection API call is made."""
+        token = AuthToken(
+            access_token="sl.test_access",
+            refresh_token="test_refresh",
+            expires_at=9999999999.0,
+            account_id="dbid:AADtest",
+            root_namespace_id="123",
+            home_namespace_id="456",
+        )
+        auth_service.save_token(token)
+        client = auth_service.get_client()
+        assert client is not None
+        # Only the main client is created — no detection client needed
         mock_dbx_cls.assert_called_once()
+        # No API calls should have been made
+        mock_dbx_cls.return_value.users_get_current_account.assert_not_called()
 
     def test_get_client_without_token_raises(self, auth_service):
         from dropbox_paper_cli.lib.errors import AuthenticationError
