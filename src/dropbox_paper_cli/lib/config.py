@@ -1,7 +1,8 @@
-"""Configuration paths, app key, and default values."""
+"""Configuration paths, app credentials, and default values."""
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from pathlib import Path
@@ -19,11 +20,50 @@ DATA_DIR: Path = Path(os.environ.get("PAPER_CLI_DATA_DIR", _xdg_data / _APP_NAME
 # Token storage (config — user-specific settings)
 TOKEN_PATH: Path = CONFIG_DIR / "tokens.json"
 
+# App config file
+APP_CONFIG_PATH: Path = CONFIG_DIR / "config.json"
+
 # SQLite cache database (data — persistent application data)
 CACHE_DB_PATH: Path = DATA_DIR / "cache.db"
 
-# Dropbox app key (public client identifier — not a secret)
-APP_KEY: str = "REDACTED_APP_KEY"
+
+def _load_app_config() -> dict:
+    """Load app config from config.json, return empty dict if missing."""
+    if APP_CONFIG_PATH.exists():
+        try:
+            return json.loads(APP_CONFIG_PATH.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def get_app_key() -> str:
+    """Get Dropbox app_key from config.json or DROPBOX_APP_KEY env var."""
+    key = os.environ.get("DROPBOX_APP_KEY", "")
+    if key:
+        return key
+    cfg = _load_app_config()
+    key = cfg.get("app_key", "")
+    if not key:
+        raise RuntimeError(
+            "Dropbox app_key not configured. "
+            "Set it in config.json or DROPBOX_APP_KEY env var.\n"
+            f"  Config file: {APP_CONFIG_PATH}\n"
+            "  See: https://www.dropbox.com/developers/apps"
+        )
+    return key
+
+
+def get_app_secret() -> str:
+    """Get Dropbox app_secret from config.json or DROPBOX_APP_SECRET env var.
+
+    Returns empty string if not set (PKCE flow will be used).
+    """
+    secret = os.environ.get("DROPBOX_APP_SECRET", "")
+    if secret:
+        return secret
+    cfg = _load_app_config()
+    return cfg.get("app_secret", "")
 
 
 def _migrate_legacy_dir() -> None:

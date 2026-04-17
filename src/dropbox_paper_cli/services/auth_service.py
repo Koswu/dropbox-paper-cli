@@ -12,7 +12,7 @@ from pathlib import Path
 import dropbox
 from dropbox.oauth import DropboxOAuth2FlowNoRedirect
 
-from dropbox_paper_cli.lib.config import APP_KEY, CONFIG_DIR, TOKEN_PATH
+from dropbox_paper_cli.lib.config import CONFIG_DIR, TOKEN_PATH, get_app_key, get_app_secret
 from dropbox_paper_cli.lib.errors import AuthenticationError
 from dropbox_paper_cli.models.auth import AuthToken
 
@@ -32,11 +32,11 @@ class AuthService:
         *,
         config_dir: Path | None = None,
         token_path: Path | None = None,
-        app_key: str = APP_KEY,
+        app_key: str | None = None,
     ) -> None:
         self._config_dir = config_dir or CONFIG_DIR
         self._token_path = token_path or TOKEN_PATH
-        self._app_key = app_key
+        self._app_key = app_key or get_app_key()
         self._flow: DropboxOAuth2FlowNoRedirect | None = None
         self._cached_path_root: dropbox.common.PathRoot | None = None
         self._ns_detected: bool = False
@@ -54,7 +54,7 @@ class AuthService:
 
     def start_auth_code_flow(self) -> str:
         """Start OAuth2 Authorization Code flow. Returns the authorization URL."""
-        app_secret = os.environ.get("DROPBOX_APP_SECRET", "")
+        app_secret = get_app_secret()
         self._flow = DropboxOAuth2FlowNoRedirect(
             consumer_key=self._app_key,
             consumer_secret=app_secret or None,

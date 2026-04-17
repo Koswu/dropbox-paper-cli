@@ -14,7 +14,7 @@ from dropbox_paper_cli.services.auth_service import AuthService
 @pytest.fixture
 def auth_service(tmp_config_dir, tmp_token_path):
     """AuthService configured with temp paths."""
-    return AuthService(config_dir=tmp_config_dir, token_path=tmp_token_path)
+    return AuthService(config_dir=tmp_config_dir, token_path=tmp_token_path, app_key="test-app-key")
 
 
 @pytest.fixture
@@ -70,7 +70,7 @@ class TestTokenPersistence:
         """If config dir doesn't exist, save_token creates it."""
         config_dir = tmp_path / "new_config"
         token_path = config_dir / "tokens.json"
-        svc = AuthService(config_dir=config_dir, token_path=token_path)
+        svc = AuthService(config_dir=config_dir, token_path=token_path, app_key="test-app-key")
         svc.save_token(sample_token)
         assert config_dir.exists()
         dir_mode = config_dir.stat().st_mode & 0o777

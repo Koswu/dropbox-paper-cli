@@ -24,6 +24,51 @@ uv tool install .
 pip install .
 ```
 
+## Setup
+
+### 1. Create a Dropbox App
+
+Go to the [Dropbox App Console](https://www.dropbox.com/developers/apps) and create a new app:
+
+- Choose **Scoped access**
+- Choose **Full Dropbox** access type
+- Give it any name you like
+
+Under the **Permissions** tab, enable:
+- `files.metadata.read`
+- `files.content.read`
+- `files.content.write`
+- `sharing.read`
+- `sharing.write`
+
+### 2. Configure Credentials
+
+Create the config file at `~/.config/dropbox-paper-cli/config.json`:
+
+```json
+{
+    "app_key": "YOUR_APP_KEY",
+    "app_secret": "YOUR_APP_SECRET"
+}
+```
+
+`app_secret` is optional — if omitted, the PKCE flow is used (no secret needed, recommended for personal use).
+
+Alternatively, set environment variables:
+
+```bash
+export DROPBOX_APP_KEY="YOUR_APP_KEY"
+export DROPBOX_APP_SECRET="YOUR_APP_SECRET"  # optional
+```
+
+### 3. Authenticate
+
+```bash
+paper auth login
+```
+
+Follow the browser prompt to authorize the app.
+
 ## Quick Start
 
 ```bash
@@ -98,7 +143,7 @@ Follows the [XDG Base Directory Specification](https://specifications.freedeskto
 
 | Purpose | Default Path | Override |
 |---------|-------------|----------|
-| Config (tokens) | `~/.config/dropbox-paper-cli/` | `PAPER_CLI_CONFIG_DIR` |
+| Config (config.json, tokens) | `~/.config/dropbox-paper-cli/` | `PAPER_CLI_CONFIG_DIR` |
 | Data (cache DB) | `~/.local/share/dropbox-paper-cli/` | `PAPER_CLI_DATA_DIR` |
 
 ## Development
