@@ -4,18 +4,18 @@ from __future__ import annotations
 
 import typer
 
-from dropbox_paper_cli.cli.common import get_dropbox_service as _get_dropbox_service  # noqa: F401
+from dropbox_paper_cli.cli.common import get_http_client as _get_http_client  # noqa: F401
 from dropbox_paper_cli.lib.url_parser import is_dropbox_url, resolve_target
 from dropbox_paper_cli.services.dropbox_service import DropboxService
 
 files_app = typer.Typer(name="files", help="File and folder operations.", no_args_is_help=True)
 
 
-def _resolve(target: str, svc: DropboxService) -> str:
-    """Resolve target — if it's a URL, use SDK to get the real ID."""
+async def _resolve(target: str, svc: DropboxService) -> str:
+    """Resolve target — if it's a URL, use API to get the real ID."""
     resolved = resolve_target(target)
     if is_dropbox_url(resolved):
-        return svc.resolve_shared_link_url(resolved)
+        return await svc.resolve_shared_link_url(resolved)
     return resolved
 
 

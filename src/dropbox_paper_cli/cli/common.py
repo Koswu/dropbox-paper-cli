@@ -8,9 +8,9 @@ from contextlib import contextmanager
 import typer
 
 from dropbox_paper_cli.lib.errors import AppError
+from dropbox_paper_cli.lib.http_client import DropboxHttpClient
 from dropbox_paper_cli.lib.output import OutputFormatter
 from dropbox_paper_cli.services.auth_service import AuthService
-from dropbox_paper_cli.services.dropbox_service import DropboxService
 
 
 def get_formatter(ctx: typer.Context) -> OutputFormatter:
@@ -28,11 +28,13 @@ def get_auth_service() -> AuthService:
     return AuthService()
 
 
-def get_dropbox_service() -> DropboxService:
-    """Get a DropboxService with an authenticated client."""
+def get_http_client() -> DropboxHttpClient:
+    """Get a DropboxHttpClient with an authenticated token.
+
+    Returns an unopened client — caller must use ``async with client:`` to open it.
+    """
     svc = AuthService()
-    client = svc.get_client()
-    return DropboxService(client=client)
+    return svc.get_http_client()
 
 
 @contextmanager

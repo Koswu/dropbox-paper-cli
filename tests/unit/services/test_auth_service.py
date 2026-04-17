@@ -1,14 +1,18 @@
-"""Tests for auth_service: OAuth2 flows, token CRUD, auto-refresh."""
+"""Tests for auth_service: PKCE OAuth2 flows, token CRUD, HTTP client factory."""
 
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+import re
+from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from dropbox_paper_cli.lib.errors import AuthenticationError
+from dropbox_paper_cli.lib.http_client import DropboxHttpClient
 from dropbox_paper_cli.models.auth import AuthToken
-from dropbox_paper_cli.services.auth_service import AuthService
+from dropbox_paper_cli.services.auth_service import AuthService, _generate_pkce_pair
 
 
 @pytest.fixture
@@ -27,6 +31,29 @@ def sample_token():
         account_id="dbid:AADtest",
         uid="12345",
     )
+
+
+class TestGeneratePKCEPair:
+    """_generate_pkce_pair() produces valid PKCE verifier and challenge."""
+
+    def test_returns_two_strings(self):
+        verifier, challenge = _generate_pkce_pair()
+        assert isinstance(verifier, str)
+        assert isinstance(challenge, str)
+
+    def test_verifier_length(self):
+        verifier, _ = _generate_pkce_pair()
+        assert len(verifier) >= 43
+
+    def test_challenge_is_base64url(self):
+        _, challenge = _generate_pkce_pair()
+        # base64url uses only [A-Za-z0-9_-], no padding '='
+        assert re.fullmatch(r"[A-Za-z0-9_-]+", challenge)
+
+    def test_pairs_are_unique(self):
+        pair_a = _generate_pkce_pair()
+        pair_b = _generate_pkce_pair()
+        assert pair_a[0] != pair_b[0]
 
 
 class TestTokenPersistence:
@@ -63,7 +90,6 @@ class TestTokenPersistence:
         assert not tmp_token_path.exists()
 
     def test_delete_token_idempotent(self, auth_service):
-        # Deleting when no token exists should not raise
         auth_service.delete_token()
 
     def test_save_creates_config_dir(self, tmp_path, sample_token):
@@ -77,90 +103,140 @@ class TestTokenPersistence:
         assert dir_mode == 0o700
 
 
-class TestPKCEFlowInitiation:
-    """PKCE flow creates auth URL and processes auth code."""
+class TestPKCEFlow:
+    """PKCE flow: start produces valid URL, finish exchanges code via HTTP."""
 
-    @patch("dropbox_paper_cli.services.auth_service.DropboxOAuth2FlowNoRedirect")
-    def test_start_pkce_flow_returns_url(self, mock_flow_cls, auth_service):
-        mock_flow = MagicMock()
-        mock_flow.start.return_value = "https://www.dropbox.com/oauth2/authorize?..."
-        mock_flow_cls.return_value = mock_flow
-
+    def test_start_pkce_flow_returns_url(self, auth_service):
         url = auth_service.start_pkce_flow()
-        assert "dropbox.com" in url
-        mock_flow_cls.assert_called_once()
-        # Verify PKCE is enabled
-        call_kwargs = mock_flow_cls.call_args
-        assert call_kwargs[1].get("use_pkce") is True or call_kwargs.kwargs.get("use_pkce") is True
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
+        assert "dropbox.com" in parsed.netloc
+        assert params["client_id"] == ["test-app-key"]
+        assert params["response_type"] == ["code"]
+        assert "code_challenge" in params
+        assert params["code_challenge_method"] == ["S256"]
 
-    @patch("dropbox_paper_cli.services.auth_service.DropboxOAuth2FlowNoRedirect")
-    def test_finish_pkce_flow_returns_token(self, mock_flow_cls, auth_service):
-        from datetime import datetime, timedelta
-
-        mock_result = MagicMock()
-        mock_result.access_token = "sl.new_access"
-        mock_result.refresh_token = "new_refresh"
-        mock_result.expires_at = datetime.utcnow() + timedelta(hours=4)
-        mock_result.account_id = "dbid:AADnew"
-        mock_result.user_id = "67890"
-
-        mock_flow = MagicMock()
-        mock_flow.start.return_value = "https://example.com"
-        mock_flow.finish.return_value = mock_result
-        mock_flow_cls.return_value = mock_flow
-
+    async def test_finish_pkce_flow_returns_token(self, auth_service):
         auth_service.start_pkce_flow()
-        token = auth_service.finish_flow("auth_code_123")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "access_token": "sl.new_access",
+            "refresh_token": "new_refresh",
+            "expires_in": 14400,
+            "account_id": "dbid:AADnew",
+            "uid": "67890",
+            "token_type": "bearer",
+        }
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "dropbox_paper_cli.services.auth_service.httpx.AsyncClient", return_value=mock_client
+        ):
+            token = await auth_service.finish_flow("auth_code_123")
+
         assert token.access_token == "sl.new_access"
         assert token.refresh_token == "new_refresh"
         assert token.account_id == "dbid:AADnew"
+        # Verify the POST was called with correct data
+        call_kwargs = mock_client.post.call_args
+        assert call_kwargs[1]["data"]["code"] == "auth_code_123"
+        assert "code_verifier" in call_kwargs[1]["data"]
+
+    async def test_finish_flow_without_start_raises(self, auth_service):
+        with pytest.raises(AuthenticationError):
+            await auth_service.finish_flow("some_code")
+
+    async def test_finish_flow_http_error_raises(self, auth_service):
+        auth_service.start_pkce_flow()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.json.return_value = {"error_description": "invalid grant"}
+        mock_response.text = "invalid grant"
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with (
+            patch(
+                "dropbox_paper_cli.services.auth_service.httpx.AsyncClient",
+                return_value=mock_client,
+            ),
+            pytest.raises(AuthenticationError, match="Token exchange failed"),
+        ):
+            await auth_service.finish_flow("bad_code")
 
 
-class TestAuthCodeFlowInitiation:
+class TestAuthCodeFlow:
     """Authorization Code flow (--flow code) creates auth URL."""
 
-    @patch("dropbox_paper_cli.services.auth_service.DropboxOAuth2FlowNoRedirect")
-    def test_start_auth_code_flow_returns_url(self, mock_flow_cls, auth_service):
-        mock_flow = MagicMock()
-        mock_flow.start.return_value = "https://www.dropbox.com/oauth2/authorize?..."
-        mock_flow_cls.return_value = mock_flow
-
+    @patch("dropbox_paper_cli.services.auth_service.get_app_secret", return_value="test-secret")
+    def test_start_auth_code_flow_returns_url(self, _mock_secret, auth_service):
         url = auth_service.start_auth_code_flow()
-        assert "dropbox.com" in url
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
+        assert "dropbox.com" in parsed.netloc
+        assert params["client_id"] == ["test-app-key"]
+        assert params["response_type"] == ["code"]
+        # Auth code flow should NOT include code_challenge
+        assert "code_challenge" not in params
+
+    @patch("dropbox_paper_cli.services.auth_service.get_app_secret", return_value=None)
+    def test_auth_code_flow_falls_back_to_pkce(self, _mock_secret, auth_service):
+        """Without app_secret, auth_code flow falls back to PKCE."""
+        url = auth_service.start_auth_code_flow()
+        params = parse_qs(urlparse(url).query)
+        assert "code_challenge" in params
 
 
-class TestGetDropboxClient:
-    """get_client returns a Dropbox SDK client using stored token."""
+class TestGetHttpClient:
+    """get_http_client returns a DropboxHttpClient using stored token."""
 
-    @patch("dropbox_paper_cli.services.auth_service.dropbox.Dropbox")
-    def test_get_client_with_valid_token(self, mock_dbx_cls, auth_service, sample_token):
+    def test_get_http_client_with_valid_token(self, auth_service, sample_token):
         auth_service.save_token(sample_token)
-        client = auth_service.get_client()
-        assert client is not None
-        # Main client + separate detection client (short timeout for namespace detection)
-        assert mock_dbx_cls.call_count == 2
+        client = auth_service.get_http_client()
+        assert isinstance(client, DropboxHttpClient)
 
-    @patch("dropbox_paper_cli.services.auth_service.dropbox.Dropbox")
-    def test_get_client_cached_namespace_skips_api_call(self, mock_dbx_cls, auth_service):
-        """When namespace info is cached in the token, no detection API call is made."""
-        token = AuthToken(
-            access_token="sl.test_access",
-            refresh_token="test_refresh",
-            expires_at=9999999999.0,
-            account_id="dbid:AADtest",
-            root_namespace_id="123",
-            home_namespace_id="456",
-        )
-        auth_service.save_token(token)
-        client = auth_service.get_client()
-        assert client is not None
-        # Only the main client is created — no detection client needed
-        mock_dbx_cls.assert_called_once()
-        # No API calls should have been made
-        mock_dbx_cls.return_value.users_get_current_account.assert_not_called()
-
-    def test_get_client_without_token_raises(self, auth_service):
-        from dropbox_paper_cli.lib.errors import AuthenticationError
-
+    def test_get_http_client_without_token_raises(self, auth_service):
         with pytest.raises(AuthenticationError):
-            auth_service.get_client()
+            auth_service.get_http_client()
+
+
+class TestTokenFileCompatibility:
+    """Verify token files from the old SDK-based flow can still be loaded (SC-007)."""
+
+    def test_load_sdk_format_token_file(self, auth_service, tmp_token_path):
+        """A token JSON file matching the SDK-generated format is loadable."""
+        sdk_token_data = {
+            "access_token": "sl.old_access_token_from_sdk",
+            "refresh_token": "old_refresh_token_from_sdk",
+            "account_id": "dbid:AABBC12345",
+            "uid": "12345",
+            "root_namespace_id": "100",
+            "home_namespace_id": "100",
+            "expires_at": 9999999999.0,
+            "token_type": "bearer",
+        }
+        tmp_token_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_token_path.write_text(json.dumps(sdk_token_data))
+
+        loaded = auth_service.load_token()
+        assert loaded is not None
+        assert loaded.access_token == "sl.old_access_token_from_sdk"
+        assert loaded.refresh_token == "old_refresh_token_from_sdk"
+        assert loaded.account_id == "dbid:AABBC12345"
+        assert loaded.uid == "12345"
+        assert loaded.root_namespace_id == "100"
+        assert loaded.home_namespace_id == "100"
+
+        # Verify DropboxHttpClient can be initialized from it
+        client = auth_service.get_http_client()
+        assert isinstance(client, DropboxHttpClient)
