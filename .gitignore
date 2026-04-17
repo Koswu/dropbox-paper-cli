@@ -42,3 +42,6 @@ htmlcov/
 # Project-specific
 *.log
 *.tmp
+
+# App config (may contain credentials)
+config.json
