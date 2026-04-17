@@ -1,9 +1,14 @@
-"""CachedMetadata, SyncState, and SyncResult dataclasses for local metadata cache."""
+"""CachedMetadata dataclass for local metadata cache."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+
+# Re-export for backward compatibility — importers can still do:
+#   from dropbox_paper_cli.models.cache import SyncResult, SyncState
+from dropbox_paper_cli.models.sync import SyncResult as SyncResult
+from dropbox_paper_cli.models.sync import SyncState as SyncState
 
 
 @dataclass
@@ -59,25 +64,3 @@ class CachedMetadata:
             content_hash=row[10] if len(row) > 10 else None,
             synced_at=row[11] if len(row) > 11 else "",
         )
-
-
-@dataclass
-class SyncState:
-    """Tracks the cursor position for incremental sync."""
-
-    key: str = "default"
-    cursor: str | None = None
-    last_sync_at: str | None = None
-    total_items: int = 0
-
-
-@dataclass
-class SyncResult:
-    """Summary of a sync operation."""
-
-    added: int = 0
-    updated: int = 0
-    removed: int = 0
-    total: int = 0
-    duration_seconds: float = 0.0
-    sync_type: str = "full"
