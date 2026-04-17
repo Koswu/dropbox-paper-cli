@@ -95,11 +95,11 @@ As a project maintainer, I want the `dropbox` SDK package completely removed fro
 
 ### Edge Cases
 
-- What happens when the Dropbox API returns an unexpected JSON structure or missing fields? The client should handle gracefully with clear error messages rather than crashing.
+- What happens when the Dropbox API returns an unexpected JSON structure or missing fields? The `from_api()` factory methods MUST catch `KeyError`/`TypeError` from malformed JSON and raise `ValidationError` with a message including the missing field name and the first 200 characters of the raw response, rather than propagating unhandled exceptions.
 - What happens when a token refresh fails (e.g., refresh token revoked)? The user should see a clear message instructing them to re-authenticate.
 - What happens during concurrent async requests if the access token expires mid-batch? The HTTP client MUST use an `asyncio.Lock` with a double-check pattern: the first task to receive a 401 acquires the lock and refreshes the token; concurrent tasks wait on the lock, then verify the token was already refreshed before retrying with the new token. Only one refresh occurs per expiry cycle.
 - What happens if the Dropbox API rate-limits specific endpoints differently? The retry logic should respect per-response `Retry-After` headers.
-- What happens when a Paper document export returns unexpected content encoding? The client should handle encoding gracefully.
+- What happens when a Paper document export returns unexpected content encoding? The client MUST attempt UTF-8 decoding; if decoding fails, raise `ValidationError` with the encoding error details and the first 200 bytes of raw content for diagnosis.
 - What happens during sync when a folder is deleted server-side between the top-level listing and the folder's recursive listing? The error should be handled and the sync should continue.
 
 ## Requirements *(mandatory)*
@@ -117,11 +117,11 @@ As a project maintainer, I want the `dropbox` SDK package completely removed fro
 - **FR-009**: System MUST implement shared link URL resolution via the sharing API endpoint
 - **FR-010**: System MUST support team namespace detection and path root configuration via direct API calls to the users/get_current_account endpoint
 - **FR-011**: System MUST implement retry logic for transient HTTP errors (429, 500, 503, connection errors, timeouts) with exponential backoff and respect for `Retry-After` headers
-- **FR-012**: System MUST use a single httpx `AsyncClient` for all API operations (not only the sync orchestrator), with `asyncio.run()` at each CLI command entry point as the sync/async boundary; the sync orchestrator replaces the current thread-pool approach with `asyncio.gather()` or equivalent async concurrency, throttled by an `asyncio.Semaphore(20)` (configurable) to match the current proven concurrency level and avoid triggering API rate limits
-- **FR-013**: System MUST provide configurable timeouts for all HTTP requests with two profiles: metadata/RPC endpoints default to `connect=5s, read=5s`; content-download and content-upload endpoints default to `connect=5s, read=30s`
+- **FR-012**: System MUST use `asyncio.run()` at each CLI command entry point as the sync/async boundary; the sync orchestrator replaces the current thread-pool approach with `asyncio.gather()` or equivalent async concurrency, throttled by an `asyncio.Semaphore(20)` (configurable via the existing `--concurrency` CLI flag) to match the current proven concurrency level and avoid triggering API rate limits
+- **FR-013**: System MUST provide predefined timeout profiles for all HTTP requests: metadata/RPC endpoints default to `connect=5s, read=5s`; content-download and content-upload endpoints default to `connect=5s, read=30s` (compile-time constants; runtime override is not required for this migration)
 - **FR-014**: System MUST use connection pooling to efficiently reuse HTTP connections across multiple API calls
 - **FR-015**: System MUST preserve the existing token file format and storage mechanism (JSON file with 0600 permissions, atomic writes) so that users do not need to re-authenticate after the migration
-- **FR-016**: System MUST maintain all existing error types (`NotFoundError`, `ValidationError`, `AuthenticationError`) and map HTTP response codes and Dropbox API error structures to these types
+- **FR-016**: System MUST maintain all existing error types (`NotFoundError`, `ValidationError`, `AuthenticationError`, `NetworkError`, `PermissionError`) and map HTTP response codes and Dropbox API error structures to these types
 - **FR-017**: System MUST handle the Dropbox API's content-download endpoints (which return data in the response body with metadata in a special header) correctly
 - **FR-018**: System MUST handle the Dropbox API's content-upload endpoints (which accept data in the request body with parameters in a special header) correctly
 - **FR-019**: System MUST update the model layer to parse Dropbox API JSON responses directly instead of relying on SDK metadata objects
@@ -143,7 +143,7 @@ As a project maintainer, I want the `dropbox` SDK package completely removed fro
 - **SC-002**: The `dropbox` package is completely absent from the dependency tree; `httpx` is the sole HTTP library
 - **SC-003**: Full sync of a workspace with 500+ items completes at least 30% faster than the current SDK-based implementation
 - **SC-004**: All existing tests pass after migration (with updated mocks), maintaining current test coverage levels
-- **SC-005**: Transient errors (rate limits, server errors, timeouts) are retried automatically — users experience fewer failed operations on unreliable networks
+- **SC-005**: Transient errors (429, 500, 503, connection errors, timeouts) are retried automatically with exponential backoff (up to 3 attempts) before surfacing an error to the user; `Retry-After` headers from 429 responses are respected
 - **SC-006**: Token refresh occurs transparently — users are never prompted to re-authenticate due to expired access tokens (only if the refresh token itself is revoked)
 - **SC-007**: Existing authenticated users can continue using the CLI after updating without needing to re-authenticate (token file compatibility preserved)
 - **SC-008**: Sequential multi-step operations (e.g., listing a folder then reading a document) complete within timeout bounds — metadata calls respond within 5s and content operations within 30s under normal conditions

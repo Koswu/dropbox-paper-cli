@@ -34,12 +34,12 @@
 
 ### HTTP Client Core
 
-- [ ] T005 Implement `METADATA_TIMEOUT` and `CONTENT_TIMEOUT` constants in src/dropbox_paper_cli/lib/http_client.py using `httpx.Timeout(5.0, connect=5.0, read=5.0, pool=5.0)` and `httpx.Timeout(30.0, connect=5.0, read=30.0, pool=5.0)` per R-006
+- [ ] T005 Implement `METADATA_TIMEOUT` and `CONTENT_TIMEOUT` constants in src/dropbox_paper_cli/lib/http_client.py using `httpx.Timeout(5.0, connect=5.0, read=5.0, pool=5.0)` and `httpx.Timeout(30.0, connect=5.0, read=30.0, pool=5.0)` per R-006 / FR-013
 - [ ] T006 Implement `encode_api_arg()` helper in src/dropbox_paper_cli/lib/http_client.py for encoding Dropbox-API-Arg header JSON with non-ASCII escaping per content-endpoints.md contract
 - [ ] T007 Implement `DropboxHttpClient.__init__()` in src/dropbox_paper_cli/lib/http_client.py accepting `token: AuthToken` and `app_key: str`, initializing `_refresh_lock: asyncio.Lock`, `_logger`, `_client: httpx.AsyncClient | None` per data-model.md entity spec
-- [ ] T008 Implement `DropboxHttpClient.__aenter__()` and `__aexit__()` async context manager in src/dropbox_paper_cli/lib/http_client.py to create/close `httpx.AsyncClient` with connection pooling defaults per R-001
+- [ ] T008 Implement `DropboxHttpClient.__aenter__()` and `__aexit__()` async context manager in src/dropbox_paper_cli/lib/http_client.py to create/close `httpx.AsyncClient` with connection pooling defaults per R-001 / FR-005, FR-014
 - [ ] T009 Implement `DropboxHttpClient._auth_headers()` in src/dropbox_paper_cli/lib/http_client.py returning `Authorization: Bearer` header and optional `Dropbox-API-Path-Root` for team namespace per rpc-endpoints.md common headers
-- [ ] T010 Implement `DropboxHttpClient._raise_for_api_error()` in src/dropbox_paper_cli/lib/http_client.py parsing Dropbox error JSON (409 `error_summary` patterns, 400, 403) and mapping to `NotFoundError`, `ValidationError`, `PermissionError`, `AuthenticationError` per R-008 and rpc-endpoints.md error mapping table
+- [ ] T010 Implement `DropboxHttpClient._raise_for_api_error()` in src/dropbox_paper_cli/lib/http_client.py parsing Dropbox error JSON (409 `error_summary` patterns, 400, 403) and mapping to `NotFoundError`, `ValidationError`, `PermissionError`, `AuthenticationError` per R-008 / FR-016 and rpc-endpoints.md error mapping table
 - [ ] T011 Implement `DropboxHttpClient._handle_401()` with asyncio.Lock double-check pattern in src/dropbox_paper_cli/lib/http_client.py per R-004: acquire lock, check if token already refreshed, call `_refresh_token()` if not, update `_token` and persist
 - [ ] T012 Implement `DropboxHttpClient._refresh_token()` in src/dropbox_paper_cli/lib/http_client.py: POST to `https://api.dropboxapi.com/oauth2/token` with `grant_type=refresh_token` per oauth2-endpoints.md token refresh contract, returning updated AuthToken (keep existing refresh_token, account_id, uid, namespace IDs)
 - [ ] T013 Implement DEBUG-level HTTP request logging in `DropboxHttpClient._request()` in src/dropbox_paper_cli/lib/http_client.py using `logging.getLogger("dropbox_paper_cli.lib.http_client")` — log method, URL, status code, duration in ms; on retry log delay and attempt per R-010
@@ -50,9 +50,11 @@
 
 ### Async Retry Decorator
 
-- [ ] T018 Rewrite `@with_retry()` as async decorator in src/dropbox_paper_cli/lib/retry.py: replace `dropbox.exceptions` imports with `httpx` imports, change inner wrapper to `async def`, replace `time.sleep()` with `asyncio.sleep()`, detect retryable conditions (429 + Retry-After, 500/503, `httpx.ConnectError`, `httpx.ReadTimeout`, `httpx.ConnectTimeout`) per R-005 decision table
+- [ ] T018 Rewrite `@with_retry()` as async decorator in src/dropbox_paper_cli/lib/retry.py: replace `dropbox.exceptions` imports with `httpx` imports, change inner wrapper to `async def`, replace `time.sleep()` with `asyncio.sleep()`, detect retryable conditions (429 + Retry-After, 500/503, `httpx.ConnectError`, `httpx.ReadTimeout`, `httpx.ConnectTimeout`) per R-005 / FR-011 decision table
 
 ### Foundational Tests
+
+**TDD**: Each test below defines the contract for its corresponding implementation task. Write the test (red), then implement (green), then refactor. For example: T019 → T006, T020 → T015, T021 → T016, T022 → T017, T023 → T011, T024 → T013/T014, T025 → T018.
 
 - [ ] T019 [P] Write unit tests for `encode_api_arg()` in tests/unit/lib/test_http_client.py: ASCII-only JSON, non-ASCII character escaping, compact separators
 - [ ] T020 [P] Write unit tests for `DropboxHttpClient.rpc()` in tests/unit/lib/test_http_client.py: successful JSON response, 409 error mapping to NotFoundError/ValidationError, auth header inclusion, team namespace path-root header
@@ -74,31 +76,32 @@
 
 ### Models — from_sdk() → from_api()
 
-- [ ] T026 [P] [US1] Add `DropboxItem.from_api(data: dict)` classmethod in src/dropbox_paper_cli/models/items.py: parse `.tag` for type, map `id`, `name`, `path_display`, `path_lower`, `size`, `server_modified`, `rev`, `content_hash` from JSON dict per data-model.md field mapping table. Remove `from_sdk()` classmethod and all `import dropbox` references.
-- [ ] T027 [P] [US1] Update `PaperCreateResult` construction in src/dropbox_paper_cli/models/items.py to parse from API JSON dict (`url`, `result_path`, `file_id`, `paper_revision`) — add `from_api()` if needed, remove any SDK object construction
-- [ ] T028 [P] [US1] Update `PaperUpdateResult` construction in src/dropbox_paper_cli/models/items.py to parse from API JSON dict (`paper_revision`) — add `from_api()` if needed, remove any SDK object construction
-- [ ] T029 [P] [US1] Add `MemberInfo.from_api(entry: dict)` classmethod in src/dropbox_paper_cli/models/sharing.py: parse `entry["user"]["account_id"]`, `entry["user"]["display_name"]`, `entry["user"]["email"]`, `entry["access_type"][".tag"]` per data-model.md field mapping. Remove `from_sdk()` and all `import dropbox` references.
-- [ ] T030 [P] [US1] Add `SharingInfo.from_api(data: dict, members: list[MemberInfo] | None)` classmethod in src/dropbox_paper_cli/models/sharing.py: parse `shared_folder_id`, `name`, `path_display` from JSON dict. Remove `from_sdk()`.
+- [ ] T026 [US1] Add `DropboxItem.from_api(data: dict)` classmethod in src/dropbox_paper_cli/models/items.py: parse `.tag` for type, map `id`, `name`, `path_display`, `path_lower`, `size`, `server_modified`, `rev`, `content_hash` from JSON dict per data-model.md field mapping table (FR-019). Remove `from_sdk()` classmethod and all `import dropbox` references.
+- [ ] T027 [US1] Update `PaperCreateResult` construction in src/dropbox_paper_cli/models/items.py to parse from API JSON dict (`url`, `result_path`, `file_id`, `paper_revision`) — add `from_api()` if needed, remove any SDK object construction (FR-019)
+- [ ] T028 [US1] Update `PaperUpdateResult` construction in src/dropbox_paper_cli/models/items.py to parse from API JSON dict (`paper_revision`) — add `from_api()` if needed, remove any SDK object construction (FR-019)
+- [ ] T029 [US1] Add `MemberInfo.from_api(entry: dict)` classmethod in src/dropbox_paper_cli/models/sharing.py: parse `entry["user"]["account_id"]`, `entry["user"]["display_name"]`, `entry["user"]["email"]`, `entry["access_type"][".tag"]` per data-model.md field mapping (FR-019). Remove `from_sdk()` and all `import dropbox` references.
+- [ ] T030 [US1] Add `SharingInfo.from_api(data: dict, members: list[MemberInfo] | None)` classmethod in src/dropbox_paper_cli/models/sharing.py: parse `shared_folder_id`, `name`, `path_display` from JSON dict (FR-019). Remove `from_sdk()`.
 
 ### Model Tests
 
-- [ ] T031 [P] [US1] Rewrite tests/unit/models/test_items.py: replace all `dropbox.files.FileMetadata`/`FolderMetadata` mock fixtures with plain dicts matching Dropbox API JSON schema from rpc-endpoints.md contract, test `from_api()` for files (with size/rev/content_hash), folders (tag=folder, no size), Paper documents (.paper extension)
-- [ ] T032 [P] [US1] Rewrite tests/unit/models/test_sharing.py: replace all SDK mock objects with plain dicts matching sharing API JSON schema from rpc-endpoints.md contract, test `MemberInfo.from_api()` and `SharingInfo.from_api()` with member lists
+- [ ] T031 [P] [US1] Rewrite tests/unit/models/test_items.py: replace all `dropbox.files.FileMetadata`/`FolderMetadata` mock fixtures with plain dicts matching Dropbox API JSON schema from rpc-endpoints.md contract, test `from_api()` for files (with size/rev/content_hash), folders (tag=folder, no size), Paper documents (.paper extension). **Add malformed-response tests**: missing `.tag` key → `ValidationError`, missing `path_display` → `ValidationError` with field name in message, wrong type for `size` → `ValidationError`.
+- [ ] T032 [P] [US1] Rewrite tests/unit/models/test_sharing.py: replace all SDK mock objects with plain dicts matching sharing API JSON schema from rpc-endpoints.md contract, test `MemberInfo.from_api()` and `SharingInfo.from_api()` with member lists. **Add malformed-response tests**: missing `user` key → `ValidationError`, missing `access_type` → `ValidationError`.
 
 ### DropboxService Rewrite
 
 - [ ] T033 [US1] Rewrite `DropboxService.__init__()` in src/dropbox_paper_cli/services/dropbox_service.py to accept `client: DropboxHttpClient` instead of `dropbox.Dropbox`. Remove all `import dropbox` statements.
 - [ ] T034 [US1] Rewrite `DropboxService.list_folder()` as `async def` in src/dropbox_paper_cli/services/dropbox_service.py: call `self._client.rpc("files/list_folder", {...})`, handle pagination via `files/list_folder/continue` with `has_more`/`cursor`, return `[DropboxItem.from_api(e) for e in entries]` per rpc-endpoints.md contract
 - [ ] T035 [US1] Rewrite `DropboxService.get_metadata()` as `async def` in src/dropbox_paper_cli/services/dropbox_service.py: call `self._client.rpc("files/get_metadata", {"path": path})`, return `DropboxItem.from_api(data)`
-- [ ] T036 [P] [US1] Rewrite `DropboxService.move()` as `async def` in src/dropbox_paper_cli/services/dropbox_service.py: call `self._client.rpc("files/move_v2", {"from_path": ..., "to_path": ..., "autorename": False})`, return `DropboxItem.from_api(data["metadata"])`
-- [ ] T037 [P] [US1] Rewrite `DropboxService.copy()` as `async def` in src/dropbox_paper_cli/services/dropbox_service.py: call `self._client.rpc("files/copy_v2", {"from_path": ..., "to_path": ..., "autorename": False})`, return `DropboxItem.from_api(data["metadata"])`
-- [ ] T038 [P] [US1] Rewrite `DropboxService.delete()` as `async def` in src/dropbox_paper_cli/services/dropbox_service.py: call `self._client.rpc("files/delete_v2", {"path": path})`, return `DropboxItem.from_api(data["metadata"])`
-- [ ] T039 [P] [US1] Rewrite `DropboxService.create_folder()` as `async def` in src/dropbox_paper_cli/services/dropbox_service.py: call `self._client.rpc("files/create_folder_v2", {"path": path, "autorename": False})`, return `DropboxItem.from_api(data["metadata"])`
-- [ ] T040 [US1] Rewrite `DropboxService.export_paper()` as `async def` in src/dropbox_paper_cli/services/dropbox_service.py: call `self._client.content_download("files/export", {"path": path})`, decode body bytes as UTF-8 for Markdown content, return content string and metadata per content-endpoints.md export contract
+- [ ] T036 [US1] Rewrite `DropboxService.move()` as `async def` in src/dropbox_paper_cli/services/dropbox_service.py: call `self._client.rpc("files/move_v2", {"from_path": ..., "to_path": ..., "autorename": False})`, return `DropboxItem.from_api(data["metadata"])` (FR-006)
+- [ ] T037 [US1] Rewrite `DropboxService.copy()` as `async def` in src/dropbox_paper_cli/services/dropbox_service.py: call `self._client.rpc("files/copy_v2", {"from_path": ..., "to_path": ..., "autorename": False})`, return `DropboxItem.from_api(data["metadata"])` (FR-006)
+- [ ] T038 [US1] Rewrite `DropboxService.delete()` as `async def` in src/dropbox_paper_cli/services/dropbox_service.py: call `self._client.rpc("files/delete_v2", {"path": path})`, return `DropboxItem.from_api(data["metadata"])` (FR-006)
+- [ ] T039 [US1] Rewrite `DropboxService.create_folder()` as `async def` in src/dropbox_paper_cli/services/dropbox_service.py: call `self._client.rpc("files/create_folder_v2", {"path": path, "autorename": False})`, return `DropboxItem.from_api(data["metadata"])` (FR-006)
+- [ ] T040 [US1] Rewrite `DropboxService.export_paper_content()` as `async def` in src/dropbox_paper_cli/services/dropbox_service.py: call `self._client.content_download("files/export", {"path": path})`, decode body bytes as UTF-8 for Markdown content (raise `ValidationError` on decode failure per edge case spec), return content string and metadata per content-endpoints.md export contract (FR-007, FR-017)
 - [ ] T041 [US1] Rewrite `DropboxService.create_paper()` as `async def` in src/dropbox_paper_cli/services/dropbox_service.py: call `self._client.content_upload("files/paper/create", {"path": path, "import_format": {".tag": fmt}}, content.encode("utf-8"))`, return `PaperCreateResult` from API JSON per content-endpoints.md create contract
 - [ ] T042 [US1] Rewrite `DropboxService.update_paper()` as `async def` in src/dropbox_paper_cli/services/dropbox_service.py: call `self._client.content_upload("files/paper/update", {"path": path, "import_format": {".tag": fmt}, "doc_update_policy": {".tag": policy}, "paper_revision": rev}, content.encode("utf-8"))`, return `PaperUpdateResult` from API JSON per content-endpoints.md update contract
 - [ ] T043 [US1] Rewrite `DropboxService.resolve_shared_link_url()` as `async def` in src/dropbox_paper_cli/services/dropbox_service.py: call `self._client.rpc("sharing/get_shared_link_metadata", {"url": url})`, extract and return path from response per rpc-endpoints.md sharing contract
 - [ ] T044 [US1] Remove `_IMPORT_FORMATS` and `_UPDATE_POLICIES` SDK enum mappings from src/dropbox_paper_cli/services/dropbox_service.py — replace with plain string-to-dict-tag mappings inline in create_paper/update_paper
+- [ ] T044b [US1] Rewrite `DropboxService.get_or_create_sharing_link()` as `async def` in src/dropbox_paper_cli/services/dropbox_service.py: call `self._client.rpc("sharing/create_shared_link_with_settings", {"path": path, "settings": {}})`, handle 409 `shared_link_already_exists` by extracting existing link URL from error metadata, return `{"url": url}` dict (FR-008). Used by TUI `search.py` and CLI `files_browse.py`.
 
 ### SharingService Rewrite
 
@@ -171,7 +174,7 @@
 ### SyncOrchestrator Rewrite
 
 - [ ] T072 [US3] Rewrite `SyncOrchestrator.__init__()` in src/dropbox_paper_cli/services/sync_orchestrator.py: accept `conn: sqlite3.Connection` and `client: DropboxHttpClient` (instead of `dropbox.Dropbox`), remove `client_factory` parameter (no per-thread clones needed). Remove all `import dropbox` statements.
-- [ ] T073 [US3] Rewrite `SyncOrchestrator.sync()` as `async def` in src/dropbox_paper_cli/services/sync_orchestrator.py: replace `ThreadPoolExecutor(max_workers=concurrency)` with `asyncio.Semaphore(concurrency)`, replace `Queue()` and `_SENTINEL` with direct `await`/return values, use `asyncio.gather(*tasks)` for concurrent folder listing per R-007 migration mapping table
+- [ ] T073 [US3] Rewrite `SyncOrchestrator.sync()` as `async def` in src/dropbox_paper_cli/services/sync_orchestrator.py: replace `ThreadPoolExecutor(max_workers=concurrency)` with `asyncio.Semaphore(concurrency)`, replace `Queue()` and `_SENTINEL` with direct `await`/return values, use `asyncio.gather(*tasks)` for concurrent folder listing per R-007 / FR-012 migration mapping table
 - [ ] T074 [US3] Rewrite folder-level worker methods as `async def` in src/dropbox_paper_cli/services/sync_orchestrator.py: each folder listing acquires semaphore before calling `self._client.rpc("files/list_folder", ...)`, handles pagination via `files/list_folder/continue`, constructs `CachedMetadata` from API JSON, commits to SQLite in batches of 500 per R-007
 - [ ] T075 [US3] Implement incremental sync detection as `async def` in src/dropbox_paper_cli/services/sync_orchestrator.py: use `list_folder` with cursor-based continuation for delta detection, handle cursor reset (409 with `reset` in error_summary) by falling back to full sync per rpc-endpoints.md cursor reset behavior
 - [ ] T076 [US3] Implement graceful error handling in sync orchestrator in src/dropbox_paper_cli/services/sync_orchestrator.py: if a single folder fails, log error and continue syncing other folders (do not cancel all tasks). Collect errors for final SyncResult reporting.
@@ -184,14 +187,15 @@
 
 - [ ] T078 [P] [US3] Rewrite tests/unit/services/test_cache_service.py: mock `DropboxHttpClient` instead of `dropbox.Dropbox`, make test methods `async def`, mock async sync orchestrator
 - [ ] T079 [US3] Add new test cases in tests/unit/services/ for `SyncOrchestrator` async behavior: test concurrent folder listing with semaphore bound, test graceful error handling (one folder fails, others succeed), test cursor-based incremental sync, test cursor reset fallback to full sync. Use `AsyncMock` for `DropboxHttpClient.rpc()`.
+- [ ] T079b [US3] Benchmark sync performance (SC-003): time `paper sync` on a workspace with 100+ items using both the old SDK implementation (on `main` branch) and the new async implementation. Record wall-clock times and verify ≥30% improvement. Document results in the PR description.
 
-**Checkpoint**: Sync operations use full async concurrency. `paper sync` works with `asyncio.gather()` + `Semaphore(20)`. Performance improvement measurable on large workspaces.
+**Checkpoint**: Sync operations use full async concurrency. `paper sync` works with `asyncio.gather()` + `Semaphore(20)`. Performance improvement measured and documented.
 
 ---
 
 ## Phase 6: User Story 4 — Robust Error Handling and Retry Behavior (Priority: P2)
 
-**Goal**: Verify that the async retry logic (built in Phase 2) correctly handles all transient error scenarios. This story is largely satisfied by Phases 2 and 3, but needs integration-level validation.
+**Goal**: Verify that the async retry logic (built in Phase 2) correctly handles all transient error scenarios. The core retry infrastructure is built in Phase 2; this phase adds refinements (`NetworkError` mapping, `Retry-After` override) and integration-level validation. Depends on Phase 2 only — can run in parallel with Phases 3 and 4.
 
 **Independent Test**: Simulate network errors (connection timeouts, 429 rate limits, 500 server errors) and verify retries occur with correct backoff. Verify `Retry-After` header is respected. Verify token refresh on 401 is transparent.
 
@@ -225,8 +229,9 @@
 ### Integration Smoke Test
 
 - [ ] T090 [US5] Update tests/integration/test_smoke.py: replace any SDK-based smoke test setup with async service calls via `DropboxHttpClient`, update assertions for API JSON responses
+- [ ] T090b [US5] Add token file compatibility test in tests/unit/services/test_auth_service.py: load a fixture token JSON file (matching the current SDK-generated format with `access_token`, `refresh_token`, `account_id`, `uid`, `root_namespace_id`, `home_namespace_id`, `expires_at`) and verify `AuthToken.load()` succeeds and `DropboxHttpClient` can be initialized from it without error (SC-007, FR-015)
 
-**Checkpoint**: `dropbox` package is completely absent. `import dropbox` returns zero grep results. Full test suite passes. Linting clean.
+**Checkpoint**: `dropbox` package is completely absent. `import dropbox` returns zero grep results. Full test suite passes. Token compatibility verified. Linting clean.
 
 ---
 
@@ -234,9 +239,9 @@
 
 **Purpose**: Observability, documentation, final validation
 
-- [ ] T091 [P] Implement `--verbose` flag wiring in src/dropbox_paper_cli/app.py: when `--verbose` is passed, set root logger to DEBUG level so `dropbox_paper_cli.lib.http_client` DEBUG logs become visible per R-010
-- [ ] T092 [P] Implement `PAPER_LOG_LEVEL` environment variable support in src/dropbox_paper_cli/app.py: read env var at startup, configure logging level accordingly per FR-021
-- [ ] T093 [P] Update src/dropbox_paper_cli/tui/search.py if it references any SDK types or sync service calls — verify it works with async service layer (TUI is already async via Textual per plan.md)
+- [ ] T091 Implement `--verbose` flag wiring in src/dropbox_paper_cli/app.py: when `--verbose` is passed, set root logger to DEBUG level so `dropbox_paper_cli.lib.http_client` DEBUG logs become visible per R-010 / FR-021
+- [ ] T092 Implement `PAPER_LOG_LEVEL` environment variable support in src/dropbox_paper_cli/app.py: read env var at startup, configure logging level accordingly per FR-021
+- [ ] T093 Update src/dropbox_paper_cli/tui/search.py for async migration: (1) Rewrite `_get_dropbox_service()` to create `DropboxHttpClient` + `DropboxService` via async context manager; (2) Update `@work(thread=True)` methods (`_fetch_link`, `_open_in_browser`, `_read_document`) to bridge into async using `asyncio.run()` inside the threaded worker — call `async def` service methods (`get_or_create_sharing_link()`, `export_paper_content()`) within the async context; (3) Remove any remaining `import dropbox` references
 - [ ] T094 Run quickstart.md validation: execute all commands from specs/002-httpx-api-migration/quickstart.md setup and test sections to verify documented workflows work
 - [ ] T095 Run full test suite with verbose logging: `PAPER_LOG_LEVEL=DEBUG uv run pytest tests/unit/ -v` and verify DEBUG HTTP logs appear, no test regressions
 - [ ] T096 Verify type checking passes: `uv run ty check src/` — resolve any type errors introduced by async migration
@@ -287,42 +292,44 @@ Phase 8 (Polish)
 
 - Models before services (services depend on `from_api()`)
 - Services before CLI layer (CLI wraps service calls)
-- Tests can be written in parallel with implementation (marked [P])
+- **TDD order (Constitution Principle VI, NON-NEGOTIABLE)**: For each feature unit, write the failing test FIRST, then implement the minimal code to pass it, then refactor. Task numbering reflects logical grouping — not execution order. Always follow the Red-Green-Refactor cycle.
 - Each phase checkpoint validates independently
 
 ### Parallel Opportunities
 
-- **Phase 2**: T019–T025 (all foundational tests) can run in parallel
-- **Phase 3**: T026–T030 (all model tasks) can run in parallel; T031–T032 (model tests) in parallel; T036–T039 (move/copy/delete/mkdir) in parallel; T049–T050 (service tests) in parallel; T058–T061 (CLI tests) in parallel
+**Note**: Tasks marked `[P]` (test tasks) may still be parallelized with each other (different files), but NOT with their corresponding implementation tasks. Follow TDD: test first → implement → refactor.
+
+- **Phase 2**: T019–T025 (all foundational tests) can run in parallel with each other
+- **Phase 3**: T031–T032 (model tests) in parallel with each other; T036–T039 (move/copy/delete/mkdir) are sequential (same file); T049–T050 (service tests) in parallel; T058–T061 (CLI tests) in parallel
 - **Phase 4**: T070–T071 (auth tests) can run in parallel
 - **Phase 3 & Phase 4**: Can be worked on in parallel by different developers (independent services)
-- **Phase 6**: T082–T083 (error tests) can run in parallel with US1/US2 implementation
+- **Phase 6**: T082–T083 (error tests) can run in parallel with each other
 
 ---
 
-## Parallel Example: User Story 1 (Phase 3)
+## TDD Example: User Story 1 (Phase 3)
 
 ```bash
-# Launch all model rewrites in parallel (different files):
+# TDD Step 1: Write model tests first (parallel with each other, different files):
+Task T031: "Write tests for DropboxItem.from_api() in tests/unit/models/test_items.py"
+Task T032: "Write tests for MemberInfo/SharingInfo.from_api() in tests/unit/models/test_sharing.py"
+
+# TDD Step 2: Implement models to pass tests (items.py and sharing.py are different files — parallel OK):
 Task T026: "Add DropboxItem.from_api() in src/dropbox_paper_cli/models/items.py"
 Task T029: "Add MemberInfo.from_api() in src/dropbox_paper_cli/models/sharing.py"
 Task T030: "Add SharingInfo.from_api() in src/dropbox_paper_cli/models/sharing.py"
 
-# Launch model tests in parallel (different files):
-Task T031: "Rewrite tests/unit/models/test_items.py"
-Task T032: "Rewrite tests/unit/models/test_sharing.py"
+# TDD Step 3: Write service tests (parallel with each other):
+Task T049: "Write tests for DropboxService async methods in tests/unit/services/test_dropbox_service.py"
+Task T050: "Write tests for SharingService async methods in tests/unit/services/test_sharing_service.py"
 
-# After models complete, launch independent service methods in parallel:
+# TDD Step 4: Implement services to pass tests (sequential — same file for T036–T039):
 Task T036: "Rewrite DropboxService.move() in services/dropbox_service.py"
 Task T037: "Rewrite DropboxService.copy() in services/dropbox_service.py"
 Task T038: "Rewrite DropboxService.delete() in services/dropbox_service.py"
 Task T039: "Rewrite DropboxService.create_folder() in services/dropbox_service.py"
 
-# Launch service tests in parallel (different files):
-Task T049: "Rewrite tests/unit/services/test_dropbox_service.py"
-Task T050: "Rewrite tests/unit/services/test_sharing_service.py"
-
-# Launch CLI tests in parallel (different files):
+# TDD Step 5: Write CLI tests, then update CLI (parallel — different files):
 Task T058: "Update tests/unit/cli/test_files.py"
 Task T059: "Update tests/unit/cli/test_sharing.py"
 Task T060: "Update tests/unit/cli/test_common.py"
