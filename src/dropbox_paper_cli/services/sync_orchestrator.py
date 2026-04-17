@@ -14,7 +14,8 @@ import dropbox
 import dropbox.exceptions
 import dropbox.files
 
-from dropbox_paper_cli.models.cache import CachedMetadata, SyncResult, SyncState
+from dropbox_paper_cli.models.cache import CachedMetadata
+from dropbox_paper_cli.models.sync import SyncResult, SyncState
 
 _SENTINEL = object()
 
