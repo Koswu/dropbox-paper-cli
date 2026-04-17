@@ -75,6 +75,7 @@ def logout(ctx: typer.Context) -> None:
     fmt = _get_formatter(ctx)
     svc = _get_auth_service()
 
+    fmt.verbose("Removing stored credentials")
     svc.delete_token()
 
     if fmt.json_mode:

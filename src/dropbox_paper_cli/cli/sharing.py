@@ -29,10 +29,13 @@ def info(
     """Get sharing information for a shared folder."""
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
+        fmt.verbose(f"Getting sharing info for {target!r}")
         dbx_svc, share_svc = _get_services()
         resolved = resolve_target(target)
         if is_dropbox_url(resolved):
+            fmt.verbose(f"Resolving shared link URL: {resolved!r}")
             resolved = dbx_svc.resolve_shared_link_url(resolved)
+        fmt.verbose(f"Resolved to {resolved!r}")
 
         # Get the shared_folder_id from folder metadata
         shared_folder_id = dbx_svc.get_shared_folder_id(resolved)

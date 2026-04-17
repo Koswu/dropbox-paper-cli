@@ -18,6 +18,7 @@ def create_folder_cmd(
     """Create a new folder."""
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
+        fmt.verbose(f"Creating folder at {path!r}")
         svc = _files._get_dropbox_service()
         item = svc.create_folder(path)
 
@@ -46,8 +47,10 @@ def move(
     """Move a file or folder to a new location."""
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
+        fmt.verbose(f"Moving {source!r} → {destination!r}")
         svc = _files._get_dropbox_service()
         resolved_src = _files._resolve(source, svc)
+        fmt.verbose(f"Source resolved to {resolved_src!r}")
         item = svc.move_item(resolved_src, destination)
 
         if fmt.json_mode:
@@ -75,8 +78,10 @@ def copy(
     """Copy a file or folder to a new location."""
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
+        fmt.verbose(f"Copying {source!r} → {destination!r}")
         svc = _files._get_dropbox_service()
         resolved_src = _files._resolve(source, svc)
+        fmt.verbose(f"Source resolved to {resolved_src!r}")
         item = svc.copy_item(resolved_src, destination)
 
         if fmt.json_mode:
@@ -103,8 +108,10 @@ def delete(
     """Delete a file or folder."""
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
+        fmt.verbose(f"Deleting {target!r}")
         svc = _files._get_dropbox_service()
         resolved = _files._resolve(target, svc)
+        fmt.verbose(f"Resolved to {resolved!r}")
         item = svc.delete_item(resolved)
 
         if fmt.json_mode:

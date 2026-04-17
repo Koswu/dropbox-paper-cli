@@ -20,8 +20,10 @@ def list_cmd(
     """List files and folders at a Dropbox path."""
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
+        fmt.verbose(f"Listing path={path!r} recursive={recursive}")
         svc = _files._get_dropbox_service()
         items = svc.list_folder(path, recursive=recursive)
+        fmt.verbose(f"Got {len(items)} items")
 
         if fmt.json_mode:
             fmt.success(
@@ -65,8 +67,10 @@ def metadata(
     """Get detailed metadata for a specific file or folder."""
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
+        fmt.verbose(f"Getting metadata for {target!r}")
         svc = _files._get_dropbox_service()
         resolved = _files._resolve(target, svc)
+        fmt.verbose(f"Resolved to {resolved!r}")
         item = svc.get_metadata(resolved)
 
         if fmt.json_mode:
@@ -103,8 +107,10 @@ def link(
     """Get or create a sharing link for a file."""
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
+        fmt.verbose(f"Getting sharing link for {target!r}")
         svc = _files._get_dropbox_service()
         resolved = _files._resolve(target, svc)
+        fmt.verbose(f"Resolved to {resolved!r}")
         result = svc.get_or_create_sharing_link(resolved)
 
         if fmt.json_mode:
