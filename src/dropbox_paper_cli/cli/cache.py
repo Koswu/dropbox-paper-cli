@@ -9,8 +9,8 @@ import typer
 
 from dropbox_paper_cli.cli.common import get_auth_service as _get_auth_service
 from dropbox_paper_cli.cli.common import get_formatter as _get_formatter
+from dropbox_paper_cli.cli.common import safe_command
 from dropbox_paper_cli.db.connection import CacheDatabase
-from dropbox_paper_cli.lib.errors import AppError
 from dropbox_paper_cli.models.cache import SyncResult
 from dropbox_paper_cli.services.cache_service import CacheService
 
@@ -64,50 +64,42 @@ def sync(
 ) -> None:
     """Sync the Dropbox directory tree metadata to the local SQLite cache."""
     fmt = _get_formatter(ctx)
-    try:
-        with CacheDatabase() as db:
-            svc = _get_cache_service(db)
+    with safe_command(fmt), CacheDatabase() as db:
+        svc = _get_cache_service(db)
 
-            is_tty = sys.stderr.isatty()
-            on_progress, finalize = _make_progress_callback(is_tty and not fmt.json_mode)
+        is_tty = sys.stderr.isatty()
+        on_progress, finalize = _make_progress_callback(is_tty and not fmt.json_mode)
 
-            if not fmt.json_mode:
-                typer.echo("Syncing metadata...")
+        if not fmt.json_mode:
+            typer.echo("Syncing metadata...")
 
-            result = svc.sync(
-                force_full=full,
-                path=path,
-                concurrency=concurrency,
-                on_progress=on_progress,
+        result = svc.sync(
+            force_full=full,
+            path=path,
+            concurrency=concurrency,
+            on_progress=on_progress,
+        )
+        finalize()
+
+        if fmt.json_mode:
+            fmt.success(
+                {
+                    "status": "synced",
+                    "added": result.added,
+                    "updated": result.updated,
+                    "removed": result.removed,
+                    "total": result.total,
+                    "duration_seconds": result.duration_seconds,
+                    "sync_type": result.sync_type,
+                }
             )
-            finalize()
-
-            if fmt.json_mode:
-                fmt.success(
-                    {
-                        "status": "synced",
-                        "added": result.added,
-                        "updated": result.updated,
-                        "removed": result.removed,
-                        "total": result.total,
-                        "duration_seconds": result.duration_seconds,
-                        "sync_type": result.sync_type,
-                    }
-                )
-            else:
-                typer.echo(f"  Added:   {result.added} items")
-                typer.echo(f"  Updated: {result.updated} items")
-                typer.echo(f"  Removed: {result.removed} items")
-                typer.echo(f"  Total:   {result.total:,} items in cache")
-                typer.echo("")
-                typer.echo(f"✓ Sync complete ({result.duration_seconds}s)")
-
-    except AppError as e:
-        fmt.error(str(e), code=e.code)
-        raise typer.Exit(code=e.exit_code) from None
-    except Exception as e:
-        fmt.error(str(e), code="GENERAL_FAILURE")
-        raise typer.Exit(code=1) from None
+        else:
+            typer.echo(f"  Added:   {result.added} items")
+            typer.echo(f"  Updated: {result.updated} items")
+            typer.echo(f"  Removed: {result.removed} items")
+            typer.echo(f"  Total:   {result.total:,} items in cache")
+            typer.echo("")
+            typer.echo(f"✓ Sync complete ({result.duration_seconds}s)")
 
 
 @cache_app.command()
@@ -121,48 +113,40 @@ def search(
 ) -> None:
     """Search file and folder names in the local cache by keyword."""
     fmt = _get_formatter(ctx)
-    try:
-        with CacheDatabase() as db:
-            # Search doesn't need a Dropbox client — just use the DB directly
-            from dropbox_paper_cli.services.cache_service import CacheService
+    with safe_command(fmt), CacheDatabase() as db:
+        # Search doesn't need a Dropbox client — just use the DB directly
+        from dropbox_paper_cli.services.cache_service import CacheService
 
-            # Create a service with a dummy client for search-only
-            svc = CacheService(conn=db.conn, client=None)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-            results = svc.search(query, item_type=item_type, limit=limit)
+        # Create a service with a dummy client for search-only
+        svc = CacheService(conn=db.conn, client=None)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        results = svc.search(query, item_type=item_type, limit=limit)
 
-            if fmt.json_mode:
-                fmt.success(
-                    {
-                        "query": query,
-                        "results": [
-                            {
-                                "id": r.id,
-                                "name": r.name,
-                                "path": r.path_display,
-                                "type": r.item_type,
-                            }
-                            for r in results
-                        ],
-                        "count": len(results),
-                    }
-                )
-            else:
-                if not results:
-                    typer.echo(f'No results for "{query}".')
-                    return
-                typer.echo(f'Found {len(results)} results for "{query}":')
-                typer.echo("")
-                for r in results:
-                    tag = {"paper": "📝", "folder": "📁", "file": "📄"}.get(r.item_type, "📄")
-                    name = f"{r.name}/" if r.is_dir else r.name
-                    typer.echo(f"{tag} [{r.item_type:<6s}] {name:<30s} {r.path_display}")
-
-    except AppError as e:
-        fmt.error(str(e), code=e.code)
-        raise typer.Exit(code=e.exit_code) from None
-    except Exception as e:
-        fmt.error(str(e), code="GENERAL_FAILURE")
-        raise typer.Exit(code=1) from None
+        if fmt.json_mode:
+            fmt.success(
+                {
+                    "query": query,
+                    "results": [
+                        {
+                            "id": r.id,
+                            "name": r.name,
+                            "path": r.path_display,
+                            "type": r.item_type,
+                        }
+                        for r in results
+                    ],
+                    "count": len(results),
+                }
+            )
+        else:
+            if not results:
+                typer.echo(f'No results for "{query}".')
+                return
+            typer.echo(f'Found {len(results)} results for "{query}":')
+            typer.echo("")
+            for r in results:
+                tag = {"paper": "📝", "folder": "📁", "file": "📄"}.get(r.item_type, "📄")
+                name = f"{r.name}/" if r.is_dir else r.name
+                typer.echo(f"{tag} [{r.item_type:<6s}] {name:<30s} {r.path_display}")
 
 
 @cache_app.command()
