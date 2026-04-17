@@ -4,12 +4,14 @@
 [![Python](https://img.shields.io/pypi/pyversions/dropbox-paper-cli)](https://pypi.org/project/dropbox-paper-cli/)
 [![License: MIT](https://img.shields.io/pypi/l/dropbox-paper-cli)](https://github.com/Koswu/dropbox-paper-cli/blob/main/LICENSE)
 
-A Python CLI tool for managing Dropbox Paper documents from the terminal — browse files, read Paper docs as Markdown, and search across your entire workspace with a local metadata cache.
+A Python CLI tool for managing Dropbox Paper documents from the terminal — browse files, create and edit Paper docs, read as Markdown, and search across your entire workspace with a local metadata cache.
 
 ## Features
 
 - **OAuth2 Authentication** — PKCE flow with automatic token refresh
-- **File Operations** — list, read, move, copy, delete, create folders, get sharing links
+- **File Operations** — list, create, read, write, move, copy, delete, create folders, get sharing links
+- **Paper Doc Creation** — create new Paper documents from Markdown, HTML, or plain text
+- **Paper Doc Updates** — overwrite, append, prepend, or revision-safe update existing Paper documents
 - **Paper Doc Export** — read Paper documents as Markdown directly in your terminal
 - **Local Cache & Search** — sync your full Dropbox directory tree to a local SQLite database for instant keyword search (FTS5 + CJK fallback)
 - **Parallel Sync** — 20-concurrent-worker pipeline for large workspaces
@@ -84,14 +86,17 @@ Follow the browser prompt to authorize the app.
 # 1. Authenticate with Dropbox
 paper auth login
 
-# 2. Sync metadata cache
+# 2. Create a Paper document
+echo "# My First Doc" | paper files create /My First Doc.paper
+
+# 3. Read it back as Markdown
+paper files read "/My First Doc.paper"
+
+# 4. Sync metadata cache for search
 paper cache sync
 
-# 3. Search for documents
+# 5. Search for documents
 paper cache search "meeting notes"
-
-# 4. Read a Paper document
-paper files read "/path/to/document.paper"
 ```
 
 ## Commands
@@ -119,11 +124,45 @@ paper config path                    # Show config file path
 paper files list [PATH]              # List files and folders
 paper files metadata PATH            # Get detailed metadata
 paper files read PATH                # Read Paper doc as Markdown
+paper files create PATH              # Create a new Paper document
+paper files write PATH               # Update a Paper document
 paper files link PATH                # Get/create sharing link
 paper files create-folder PATH       # Create a new folder
 paper files move SRC DST             # Move file or folder
 paper files copy SRC DST             # Copy file or folder
 paper files delete PATH              # Delete file or folder
+```
+
+#### Creating Paper Documents
+
+```bash
+# From stdin (pipe-friendly)
+echo "# Meeting Notes" | paper files create /notes/Meeting.paper
+
+# From a local file
+paper files create /notes/Meeting.paper --file notes.md
+
+# HTML format
+paper files create /doc.paper --format html --file page.html
+```
+
+#### Updating Paper Documents
+
+```bash
+# Overwrite entire content (default)
+echo "# Updated" | paper files write /doc.paper
+
+# Append content to end
+echo "## Appendix" | paper files write /doc.paper --policy append
+
+# Prepend content to beginning
+echo "## Header" | paper files write /doc.paper --policy prepend
+
+# Safe update with revision check (fails if doc changed since given revision)
+paper files write /doc.paper --policy update --revision 5 --file new.md
+
+# From a local file with format
+paper files write /doc.paper --file content.md --format markdown
 ```
 
 ### Cache & Search
