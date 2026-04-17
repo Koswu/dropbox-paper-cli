@@ -131,12 +131,15 @@ class AuthService:
 
     # ── Dropbox Client ────────────────────────────────────────────
 
-    def get_client(self) -> dropbox.Dropbox:
+    def get_client(self, *, timeout: int | None = None) -> dropbox.Dropbox:
         """Get a Dropbox SDK client using stored token (with auto-refresh).
 
         For team accounts, automatically sets path_root to the team root
         namespace so all files (including team members' shared docs) are
         accessible. Namespace detection is cached after the first call.
+
+        Args:
+            timeout: Request timeout in seconds. None uses the SDK default (100s).
 
         Raises:
             AuthenticationError: If no token is stored.
@@ -147,11 +150,14 @@ class AuthService:
                 "Not authenticated. Run 'paper auth login' first.",
                 code="AUTH_REQUIRED",
             )
-        dbx = dropbox.Dropbox(
-            oauth2_access_token=token.access_token,
-            oauth2_refresh_token=token.refresh_token,
-            app_key=self._app_key,
-        )
+        kwargs: dict = {
+            "oauth2_access_token": token.access_token,
+            "oauth2_refresh_token": token.refresh_token,
+            "app_key": self._app_key,
+        }
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        dbx = dropbox.Dropbox(**kwargs)
         # Detect team account (once) and set path_root to team root namespace
         if not self._ns_detected:
             try:
