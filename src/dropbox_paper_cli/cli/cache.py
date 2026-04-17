@@ -146,7 +146,7 @@ def search(
                                 "id": r.id,
                                 "name": r.name,
                                 "path": r.path_display,
-                                "type": "folder" if r.is_dir else "file",
+                                "type": r.item_type,
                             }
                             for r in results
                         ],
@@ -160,9 +160,11 @@ def search(
                 typer.echo(f'Found {len(results)} results for "{query}":')
                 typer.echo("")
                 for r in results:
-                    icon = "📁" if r.is_dir else "📄"
+                    tag = {"paper": "📝", "folder": "📁", "file": "📄"}.get(
+                        r.item_type, "📄"
+                    )
                     name = f"{r.name}/" if r.is_dir else r.name
-                    typer.echo(f"{icon} {name:<30s} {r.path_display}")
+                    typer.echo(f"{tag} [{r.item_type:<6s}] {name:<30s} {r.path_display}")
 
     except AppError as e:
         fmt.error(str(e), code=e.code)

@@ -173,12 +173,12 @@ class TestCacheSearch:
         initialize_schema(conn)
 
         conn.execute(
-            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
-            VALUES ('id:1', 'Meeting Notes.paper', '/Meeting Notes.paper', '/meeting notes.paper', 0)"""
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, item_type)
+            VALUES ('id:1', 'Meeting Notes.paper', '/Meeting Notes.paper', '/meeting notes.paper', 0, 'paper')"""
         )
         conn.execute(
-            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
-            VALUES ('id:2', 'Meeting Recordings', '/Meeting Recordings', '/meeting recordings', 1)"""
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, item_type)
+            VALUES ('id:2', 'Meeting Recordings', '/Meeting Recordings', '/meeting recordings', 1, 'folder')"""
         )
         conn.commit()
 
@@ -191,7 +191,7 @@ class TestCacheSearch:
             mock_db.__exit__ = MagicMock(return_value=False)
             mock_db_cls.return_value = mock_db
 
-            result = runner.invoke(app, ["cache", "search", "Meeting", "--type", "file"])
+            result = runner.invoke(app, ["cache", "search", "Meeting", "--type", "paper"])
             assert result.exit_code == 0
             assert "Meeting Notes.paper" in result.stdout
             assert "Meeting Recordings" not in result.stdout

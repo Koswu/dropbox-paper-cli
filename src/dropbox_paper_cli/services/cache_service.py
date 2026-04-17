@@ -384,6 +384,13 @@ class CacheService:
 
         is_dir = isinstance(entry, dropbox.files.FolderMetadata)
 
+        if is_dir:
+            item_type = "folder"
+        elif entry.name.endswith(".paper"):
+            item_type = "paper"
+        else:
+            item_type = "file"
+
         path_lower = entry.path_lower
         parent_path = None
         if "/" in path_lower and path_lower != "/":
@@ -403,6 +410,7 @@ class CacheService:
             path_display=entry.path_display,
             path_lower=entry.path_lower,
             is_dir=is_dir,
+            item_type=item_type,
             parent_path=parent_path,
             size_bytes=getattr(entry, "size", None) if not is_dir else None,
             server_modified=server_modified if not is_dir else None,
@@ -414,9 +422,9 @@ class CacheService:
         """Insert or replace a metadata entry."""
         self._conn.execute(
             """INSERT OR REPLACE INTO metadata
-            (id, name, path_display, path_lower, is_dir, parent_path,
+            (id, name, path_display, path_lower, is_dir, item_type, parent_path,
              size_bytes, server_modified, rev, content_hash, synced_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             cached.to_row(),
         )
 
@@ -555,15 +563,17 @@ class CacheService:
 
     _SELECT_COLS = """
         m.id, m.name, m.path_display, m.path_lower, m.is_dir,
-        m.parent_path, m.size_bytes, m.server_modified, m.rev,
+        m.item_type, m.parent_path, m.size_bytes, m.server_modified, m.rev,
         m.content_hash, m.synced_at
     """
 
     def _type_clause(self, item_type: str | None) -> str:
+        if item_type == "paper":
+            return "AND m.item_type = 'paper'"
         if item_type == "file":
-            return "AND m.is_dir = 0"
+            return "AND m.item_type = 'file'"
         if item_type == "folder":
-            return "AND m.is_dir = 1"
+            return "AND m.item_type = 'folder'"
         return ""
 
     def _fts_search(

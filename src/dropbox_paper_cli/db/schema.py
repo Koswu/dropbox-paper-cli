@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # ── DDL Statements ────────────────────────────────────────────────
 
@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS metadata (
     path_display    TEXT UNIQUE NOT NULL,
     path_lower      TEXT NOT NULL,
     is_dir          INTEGER NOT NULL DEFAULT 0,
+    item_type       TEXT NOT NULL DEFAULT 'file',
     parent_path     TEXT,
     size_bytes      INTEGER,
     server_modified TEXT,
@@ -28,6 +29,11 @@ _INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_metadata_parent_path ON metadata(parent_path);
 CREATE INDEX IF NOT EXISTS idx_metadata_is_dir ON metadata(is_dir);
 CREATE INDEX IF NOT EXISTS idx_metadata_name ON metadata(name);
+"""
+
+# Indexes that depend on columns added by migrations — applied after migrations run
+_POST_MIGRATION_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_metadata_item_type ON metadata(item_type);
 """
 
 _FTS5_TABLE = """
@@ -80,10 +86,50 @@ CREATE TABLE IF NOT EXISTS schema_version (
 """
 
 
+# ── Migrations ────────────────────────────────────────────────────
+
+def _get_current_version(conn: sqlite3.Connection) -> int:
+    """Return the highest applied schema version, or 0 if none."""
+    try:
+        row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
+        return row[0] or 0
+    except sqlite3.OperationalError:
+        return 0
+
+
+def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
+    """Add item_type column and backfill from existing data."""
+    # Check if column already exists (idempotent)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(metadata)").fetchall()}
+    if "item_type" in cols:
+        return
+
+    # Drop FTS triggers to avoid unnecessary churn during backfill
+    conn.execute("DROP TRIGGER IF EXISTS metadata_fts_update")
+    conn.execute("DROP TRIGGER IF EXISTS metadata_fts_insert")
+    conn.execute("DROP TRIGGER IF EXISTS metadata_fts_delete")
+
+    conn.execute("ALTER TABLE metadata ADD COLUMN item_type TEXT NOT NULL DEFAULT 'file'")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_metadata_item_type ON metadata(item_type)")
+
+    # Backfill: folders → 'folder', .paper → 'paper', rest stays 'file'
+    conn.execute("UPDATE metadata SET item_type = 'folder' WHERE is_dir = 1")
+    conn.execute("UPDATE metadata SET item_type = 'paper' WHERE is_dir = 0 AND name LIKE '%.paper'")
+
+    # Recreate FTS triggers
+    conn.executescript(
+        _FTS_TRIGGER_INSERT + _FTS_TRIGGER_DELETE + _FTS_TRIGGER_UPDATE
+    )
+
+    conn.execute("INSERT OR REPLACE INTO schema_version (version) VALUES (2)")
+    conn.commit()
+
+
 def initialize_schema(conn: sqlite3.Connection) -> None:
     """Create all tables, indexes, FTS5 virtual table, and triggers.
 
     Safe to call multiple times (uses IF NOT EXISTS).
+    Runs migrations when upgrading from an older schema version.
     """
     conn.executescript(
         _METADATA_TABLE
@@ -96,7 +142,18 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
         + _SCHEMA_VERSION_TABLE
     )
 
-    # Record schema version if not already present
+    current = _get_current_version(conn)
+
+    if current < 2:
+        _migrate_v1_to_v2(conn)
+        # Rebuild FTS index to ensure consistency after migration
+        conn.execute("INSERT INTO metadata_fts(metadata_fts) VALUES('rebuild')")
+        conn.commit()
+
+    # Post-migration indexes (depend on columns added by migrations)
+    conn.executescript(_POST_MIGRATION_INDEXES)
+
+    # Record latest schema version
     cursor = conn.execute(
         "SELECT COUNT(*) FROM schema_version WHERE version = ?", (SCHEMA_VERSION,)
     )

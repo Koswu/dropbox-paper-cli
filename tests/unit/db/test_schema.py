@@ -36,6 +36,7 @@ class TestMetadataTable:
             "path_display",
             "path_lower",
             "is_dir",
+            "item_type",
             "parent_path",
             "size_bytes",
             "server_modified",
@@ -79,6 +80,12 @@ class TestIndexes:
     def test_is_dir_index(self, conn):
         indexes = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_metadata_is_dir'"
+        ).fetchall()
+        assert len(indexes) == 1
+
+    def test_item_type_index(self, conn):
+        indexes = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_metadata_item_type'"
         ).fetchall()
         assert len(indexes) == 1
 
@@ -189,3 +196,78 @@ class TestSchemaVersion:
         initialize_schema(conn)
         count = conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
         assert count == 1
+
+
+class TestMigrationV1ToV2:
+    """Migration from v1 (no item_type) to v2."""
+
+    @pytest.fixture
+    def v1_conn(self):
+        """Create a v1 schema database with test data."""
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            """CREATE TABLE metadata (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                path_display TEXT UNIQUE NOT NULL, path_lower TEXT NOT NULL,
+                is_dir INTEGER NOT NULL DEFAULT 0, parent_path TEXT,
+                size_bytes INTEGER, server_modified TEXT, rev TEXT,
+                content_hash TEXT, synced_at TEXT NOT NULL)"""
+        )
+        conn.execute(
+            "CREATE TABLE sync_state (key TEXT PRIMARY KEY, cursor TEXT, "
+            "last_sync_at TEXT, total_items INTEGER DEFAULT 0)"
+        )
+        conn.execute(
+            "INSERT INTO metadata (id, name, path_display, path_lower, is_dir, synced_at) "
+            "VALUES ('id:1', 'notes.paper', '/notes.paper', '/notes.paper', 0, '2025-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO metadata (id, name, path_display, path_lower, is_dir, synced_at) "
+            "VALUES ('id:2', 'report.docx', '/report.docx', '/report.docx', 0, '2025-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO metadata (id, name, path_display, path_lower, is_dir, synced_at) "
+            "VALUES ('id:3', 'Archive', '/Archive', '/archive', 1, '2025-01-01')"
+        )
+        conn.commit()
+        yield conn
+        conn.close()
+
+    def test_migration_adds_item_type_column(self, v1_conn):
+        initialize_schema(v1_conn)
+        cols = {row[1] for row in v1_conn.execute("PRAGMA table_info(metadata)").fetchall()}
+        assert "item_type" in cols
+
+    def test_migration_backfills_paper(self, v1_conn):
+        initialize_schema(v1_conn)
+        row = v1_conn.execute("SELECT item_type FROM metadata WHERE id = 'id:1'").fetchone()
+        assert row[0] == "paper"
+
+    def test_migration_backfills_file(self, v1_conn):
+        initialize_schema(v1_conn)
+        row = v1_conn.execute("SELECT item_type FROM metadata WHERE id = 'id:2'").fetchone()
+        assert row[0] == "file"
+
+    def test_migration_backfills_folder(self, v1_conn):
+        initialize_schema(v1_conn)
+        row = v1_conn.execute("SELECT item_type FROM metadata WHERE id = 'id:3'").fetchone()
+        assert row[0] == "folder"
+
+    def test_migration_sets_schema_version(self, v1_conn):
+        initialize_schema(v1_conn)
+        ver = v1_conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+        assert ver == SCHEMA_VERSION
+
+    def test_migration_idempotent(self, v1_conn):
+        initialize_schema(v1_conn)
+        initialize_schema(v1_conn)
+        rows = v1_conn.execute("SELECT item_type FROM metadata ORDER BY id").fetchall()
+        assert [r[0] for r in rows] == ["paper", "file", "folder"]
+
+    def test_migration_preserves_fts(self, v1_conn):
+        """FTS search works after migration."""
+        initialize_schema(v1_conn)
+        results = v1_conn.execute(
+            "SELECT * FROM metadata_fts WHERE metadata_fts MATCH 'notes'"
+        ).fetchall()
+        assert len(results) == 1

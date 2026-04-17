@@ -368,33 +368,33 @@ class TestSearch:
 
     def test_search_type_filter_file(self, cache_service, conn):
         conn.execute(
-            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
-            VALUES ('id:1', 'Meeting Notes.paper', '/Meeting Notes.paper', '/meeting notes.paper', 0)"""
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, item_type)
+            VALUES ('id:1', 'Meeting Notes.paper', '/Meeting Notes.paper', '/meeting notes.paper', 0, 'paper')"""
         )
         conn.execute(
-            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
-            VALUES ('id:2', 'Meeting Recordings', '/Meeting Recordings', '/meeting recordings', 1)"""
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, item_type)
+            VALUES ('id:2', 'Meeting Recordings', '/Meeting Recordings', '/meeting recordings', 1, 'folder')"""
         )
         conn.commit()
 
-        results = cache_service.search("Meeting", item_type="file")
+        results = cache_service.search("Meeting", item_type="paper")
         assert len(results) == 1
-        assert results[0].is_dir is False
+        assert results[0].item_type == "paper"
 
     def test_search_type_filter_folder(self, cache_service, conn):
         conn.execute(
-            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
-            VALUES ('id:1', 'Meeting Notes.paper', '/Meeting Notes.paper', '/meeting notes.paper', 0)"""
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, item_type)
+            VALUES ('id:1', 'Meeting Notes.paper', '/Meeting Notes.paper', '/meeting notes.paper', 0, 'paper')"""
         )
         conn.execute(
-            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
-            VALUES ('id:2', 'Meeting Recordings', '/Meeting Recordings', '/meeting recordings', 1)"""
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, item_type)
+            VALUES ('id:2', 'Meeting Recordings', '/Meeting Recordings', '/meeting recordings', 1, 'folder')"""
         )
         conn.commit()
 
         results = cache_service.search("Meeting", item_type="folder")
         assert len(results) == 1
-        assert results[0].is_dir is True
+        assert results[0].item_type == "folder"
 
     def test_search_limit(self, cache_service, conn):
         for i in range(10):

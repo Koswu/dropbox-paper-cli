@@ -53,9 +53,10 @@ class TestCachedMetadata:
             synced_at="2025-01-01T00:00:00Z",
         )
         row = entry.to_row()
-        assert len(row) == 11
+        assert len(row) == 12
         assert row[0] == "id:1"
         assert row[4] == 0  # is_dir as integer
+        assert row[5] == "file"  # item_type
 
     def test_from_row(self):
         row = (
@@ -64,6 +65,7 @@ class TestCachedMetadata:
             "/test.paper",
             "/test.paper",
             1,
+            "folder",
             "/",
             None,
             None,
@@ -74,6 +76,7 @@ class TestCachedMetadata:
         entry = CachedMetadata.from_row(row)
         assert entry.id == "id:1"
         assert entry.is_dir is True
+        assert entry.item_type == "folder"
 
     def test_synced_at_default(self):
         entry = CachedMetadata(
