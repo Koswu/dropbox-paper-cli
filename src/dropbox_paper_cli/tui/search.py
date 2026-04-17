@@ -152,13 +152,13 @@ class SearchApp(App):
                 return r
         return None
 
-    def _get_dropbox_service(self):
+    def _get_dropbox_service(self, *, timeout: int = 5):
         """Create an authenticated DropboxService with a short timeout for TUI use."""
         from dropbox_paper_cli.services.auth_service import AuthService
         from dropbox_paper_cli.services.dropbox_service import DropboxService
 
         svc = AuthService()
-        client = svc.get_client(timeout=15)
+        client = svc.get_client(timeout=timeout)
         return DropboxService(client=client)
 
     def action_get_link(self) -> None:
@@ -218,7 +218,7 @@ class SearchApp(App):
     @work(thread=True, exclusive=True, group="network")
     def _read_document(self, item: CachedMetadata) -> None:
         try:
-            dbx = self._get_dropbox_service()
+            dbx = self._get_dropbox_service(timeout=15)
             content = dbx.export_paper_content(item.id)
             preview = content[:500].replace("\n", " ↵ ")
             if len(content) > 500:
