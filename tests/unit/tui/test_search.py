@@ -112,7 +112,7 @@ class TestSearchApp:
 
     @pytest.mark.asyncio
     async def test_quit_binding(self, tmp_path):
-        """Verify q quits the app."""
+        """Verify Escape quits the app."""
         db_path = tmp_path / "test.db"
         conn = sqlite3.connect(str(db_path))
         initialize_schema(conn)
@@ -120,4 +120,4 @@ class TestSearchApp:
 
         app = SearchApp(db_path=db_path, initial_query="")
         async with app.run_test() as pilot:
-            await pilot.press("q")
+            await pilot.press("escape")

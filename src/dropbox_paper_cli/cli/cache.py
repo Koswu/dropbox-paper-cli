@@ -183,10 +183,11 @@ def isearch(
     """Interactive TUI search over the local metadata cache.
 
     Key bindings:
-      l  Get sharing link for selected item
-      o  Open selected item in browser
-      r  Preview Paper document content
-      q  Quit
+      Enter   Move focus to results table
+      F2      Get sharing link for selected item
+      F3      Open selected item in browser
+      F4      Preview Paper document content
+      Escape  Quit
     """
     fmt = _get_formatter(ctx)
     if fmt.json_mode:
