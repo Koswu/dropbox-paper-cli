@@ -17,6 +17,8 @@ from textual.widgets import DataTable, Footer, Header, Input, Static
 from dropbox_paper_cli.lib.config import CACHE_DB_PATH
 from dropbox_paper_cli.models.cache import CachedMetadata
 
+_SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
 
 class SearchApp(App):
     """Interactive search over the local Dropbox metadata cache."""
@@ -60,6 +62,9 @@ class SearchApp(App):
         self._initial_query = initial_query
         self._results: list[CachedMetadata] = []
         self._debounce_timer: Timer | None = None
+        self._spinner_timer: Timer | None = None
+        self._spinner_index = 0
+        self._spinner_message = ""
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -82,8 +87,27 @@ class SearchApp(App):
 
     async def action_quit(self) -> None:
         """Cancel all running workers before quitting."""
+        self._stop_spinner()
         self.workers.cancel_all()
         self.exit()
+
+    def _start_spinner(self, message: str) -> None:
+        """Start a spinner animation in the status bar."""
+        self._stop_spinner()
+        self._spinner_message = message
+        self._spinner_index = 0
+        self._update_spinner()
+        self._spinner_timer = self.set_interval(0.1, self._update_spinner)
+
+    def _update_spinner(self) -> None:
+        frame = _SPINNER_FRAMES[self._spinner_index % len(_SPINNER_FRAMES)]
+        self.status_text = f"{frame} {self._spinner_message}"
+        self._spinner_index += 1
+
+    def _stop_spinner(self) -> None:
+        if self._spinner_timer is not None:
+            self._spinner_timer.stop()
+            self._spinner_timer = None
 
     def watch_status_text(self, value: str) -> None:
         try:
@@ -113,6 +137,7 @@ class SearchApp(App):
         if not query:
             self._results = []
             self._update_table([])
+            self._stop_spinner()
             self.status_text = ""
             return
         self._do_search(query)
@@ -169,7 +194,7 @@ class SearchApp(App):
         if item.is_dir:
             self.status_text = "Sharing links not supported for folders"
             return
-        self.status_text = f"Getting link for {item.name}..."
+        self._start_spinner(f"Getting link for {item.name}...")
         self._fetch_link(item)
 
     @work(thread=True, exclusive=True, group="network")
@@ -178,8 +203,10 @@ class SearchApp(App):
             dbx = self._get_dropbox_service()
             result = dbx.get_or_create_sharing_link(item.id)
             url = result["url"]
+            self.call_from_thread(self._stop_spinner)
             self.call_from_thread(setattr, self, "status_text", f"🔗 {url}")
         except Exception as e:
+            self.call_from_thread(self._stop_spinner)
             self.call_from_thread(setattr, self, "status_text", f"Error: {e}")
 
     def action_open_link(self) -> None:
@@ -190,7 +217,7 @@ class SearchApp(App):
         if item.is_dir:
             self.status_text = "Cannot open folders in browser"
             return
-        self.status_text = f"Opening {item.name} in browser..."
+        self._start_spinner(f"Opening {item.name} in browser...")
         self._open_in_browser(item)
 
     @work(thread=True, exclusive=True, group="network")
@@ -200,8 +227,10 @@ class SearchApp(App):
             result = dbx.get_or_create_sharing_link(item.id)
             url = result["url"]
             webbrowser.open(url)
+            self.call_from_thread(self._stop_spinner)
             self.call_from_thread(setattr, self, "status_text", f"Opened {url}")
         except Exception as e:
+            self.call_from_thread(self._stop_spinner)
             self.call_from_thread(setattr, self, "status_text", f"Error: {e}")
 
     def action_read_doc(self) -> None:
@@ -212,7 +241,7 @@ class SearchApp(App):
         if item.item_type != "paper":
             self.status_text = "Preview only supported for Paper documents"
             return
-        self.status_text = f"Reading {item.name}..."
+        self._start_spinner(f"Reading {item.name}...")
         self._read_document(item)
 
     @work(thread=True, exclusive=True, group="network")
@@ -223,8 +252,10 @@ class SearchApp(App):
             preview = content[:500].replace("\n", " ↵ ")
             if len(content) > 500:
                 preview += "…"
+            self.call_from_thread(self._stop_spinner)
             self.call_from_thread(setattr, self, "status_text", f"📄 {preview}")
         except Exception as e:
+            self.call_from_thread(self._stop_spinner)
             self.call_from_thread(setattr, self, "status_text", f"Error: {e}")
 
 
