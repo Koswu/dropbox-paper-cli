@@ -360,3 +360,242 @@ class TestExportPaperContent:
 
         with pytest.raises(ValidationError):
             service.export_paper_content("/image.png")
+
+
+# ── Write Content ────────────────────────────────────────────────
+
+
+class TestCreatePaperDoc:
+    """create_paper_doc calls files_paper_create and returns PaperCreateResult."""
+
+    def test_create_success(self, service, mock_dbx):
+        from dropbox_paper_cli.models.items import PaperCreateResult
+
+        sdk_result = MagicMock()
+        sdk_result.url = "https://paper.dropbox.com/doc/abc"
+        sdk_result.result_path = "/notes/Meeting.paper"
+        sdk_result.file_id = "id:paper1"
+        sdk_result.paper_revision = 1
+        mock_dbx.files_paper_create.return_value = sdk_result
+
+        result = service.create_paper_doc(
+            "/notes/Meeting.paper", b"# Meeting Notes", import_format="markdown"
+        )
+        assert isinstance(result, PaperCreateResult)
+        assert result.url == "https://paper.dropbox.com/doc/abc"
+        assert result.result_path == "/notes/Meeting.paper"
+        assert result.file_id == "id:paper1"
+        assert result.paper_revision == 1
+        mock_dbx.files_paper_create.assert_called_once()
+
+    def test_create_html_format(self, service, mock_dbx):
+        sdk_result = MagicMock()
+        sdk_result.url = "https://paper.dropbox.com/doc/abc"
+        sdk_result.result_path = "/doc.paper"
+        sdk_result.file_id = "id:paper2"
+        sdk_result.paper_revision = 1
+        mock_dbx.files_paper_create.return_value = sdk_result
+
+        service.create_paper_doc("/doc.paper", b"<h1>Title</h1>", import_format="html")
+
+        call_args = mock_dbx.files_paper_create.call_args
+        assert call_args[0][2] == dropbox.files.ImportFormat.html
+
+    def test_create_invalid_extension(self, service, mock_dbx):
+        from dropbox_paper_cli.lib.errors import ValidationError
+
+        error = dropbox.exceptions.ApiError(
+            request_id="req1",
+            error=MagicMock(),
+            user_message_text="invalid extension",
+            user_message_locale="en",
+        )
+        error.error.is_invalid_file_extension.return_value = True
+        error.error.is_invalid_path.return_value = False
+        error.error.is_email_unverified.return_value = False
+        error.error.is_paper_disabled.return_value = False
+        mock_dbx.files_paper_create.side_effect = error
+
+        with pytest.raises(ValidationError, match="must end with .paper"):
+            service.create_paper_doc("/doc.txt", b"content")
+
+    def test_create_invalid_path(self, service, mock_dbx):
+        from dropbox_paper_cli.lib.errors import ValidationError
+
+        error = dropbox.exceptions.ApiError(
+            request_id="req1",
+            error=MagicMock(),
+            user_message_text="invalid path",
+            user_message_locale="en",
+        )
+        error.error.is_invalid_file_extension.return_value = False
+        error.error.is_invalid_path.return_value = True
+        mock_dbx.files_paper_create.side_effect = error
+
+        with pytest.raises(ValidationError, match="Invalid path"):
+            service.create_paper_doc("/\x00bad.paper", b"content")
+
+    def test_create_email_unverified(self, service, mock_dbx):
+        from dropbox_paper_cli.lib.errors import ValidationError
+
+        error = dropbox.exceptions.ApiError(
+            request_id="req1",
+            error=MagicMock(),
+            user_message_text="email unverified",
+            user_message_locale="en",
+        )
+        error.error.is_invalid_file_extension.return_value = False
+        error.error.is_invalid_path.return_value = False
+        error.error.is_email_unverified.return_value = True
+        mock_dbx.files_paper_create.side_effect = error
+
+        with pytest.raises(ValidationError, match="Email must be verified"):
+            service.create_paper_doc("/doc.paper", b"content")
+
+    def test_create_paper_disabled(self, service, mock_dbx):
+        from dropbox_paper_cli.lib.errors import ValidationError
+
+        error = dropbox.exceptions.ApiError(
+            request_id="req1",
+            error=MagicMock(),
+            user_message_text="paper disabled",
+            user_message_locale="en",
+        )
+        error.error.is_invalid_file_extension.return_value = False
+        error.error.is_invalid_path.return_value = False
+        error.error.is_email_unverified.return_value = False
+        error.error.is_paper_disabled.return_value = True
+        mock_dbx.files_paper_create.side_effect = error
+
+        with pytest.raises(ValidationError, match="Paper is disabled"):
+            service.create_paper_doc("/doc.paper", b"content")
+
+    def test_create_invalid_format(self, service):
+        from dropbox_paper_cli.lib.errors import ValidationError
+
+        with pytest.raises(ValidationError, match="Invalid import format"):
+            service.create_paper_doc("/doc.paper", b"content", import_format="docx")
+
+
+class TestUpdatePaperDoc:
+    """update_paper_doc calls files_paper_update and returns PaperUpdateResult."""
+
+    def test_update_overwrite_success(self, service, mock_dbx):
+        from dropbox_paper_cli.models.items import PaperUpdateResult
+
+        sdk_result = MagicMock()
+        sdk_result.paper_revision = 5
+        mock_dbx.files_paper_update.return_value = sdk_result
+
+        result = service.update_paper_doc(
+            "/doc.paper", b"# Updated", import_format="markdown", policy="overwrite"
+        )
+        assert isinstance(result, PaperUpdateResult)
+        assert result.paper_revision == 5
+        mock_dbx.files_paper_update.assert_called_once()
+
+    def test_update_with_revision(self, service, mock_dbx):
+        sdk_result = MagicMock()
+        sdk_result.paper_revision = 6
+        mock_dbx.files_paper_update.return_value = sdk_result
+
+        result = service.update_paper_doc("/doc.paper", b"# V2", policy="update", paper_revision=5)
+        assert result.paper_revision == 6
+
+        call_args = mock_dbx.files_paper_update.call_args
+        assert call_args[1]["paper_revision"] == 5
+        assert call_args[0][3] == dropbox.files.PaperDocUpdatePolicy.update
+
+    def test_update_append(self, service, mock_dbx):
+        sdk_result = MagicMock()
+        sdk_result.paper_revision = 3
+        mock_dbx.files_paper_update.return_value = sdk_result
+
+        service.update_paper_doc("/doc.paper", b"## Appendix", policy="append")
+
+        call_args = mock_dbx.files_paper_update.call_args
+        assert call_args[0][3] == dropbox.files.PaperDocUpdatePolicy.append
+
+    def test_update_requires_revision_for_update_policy(self, service):
+        from dropbox_paper_cli.lib.errors import ValidationError
+
+        with pytest.raises(ValidationError, match="--revision is required"):
+            service.update_paper_doc("/doc.paper", b"content", policy="update")
+
+    def test_update_not_found(self, service, mock_dbx):
+        from dropbox_paper_cli.lib.errors import NotFoundError
+
+        error = dropbox.exceptions.ApiError(
+            request_id="req1",
+            error=MagicMock(),
+            user_message_text="not found",
+            user_message_locale="en",
+        )
+        error.error.is_path.return_value = True
+        mock_dbx.files_paper_update.side_effect = error
+
+        with pytest.raises(NotFoundError):
+            service.update_paper_doc("/nonexistent.paper", b"content")
+
+    def test_update_doc_archived(self, service, mock_dbx):
+        from dropbox_paper_cli.lib.errors import ValidationError
+
+        error = dropbox.exceptions.ApiError(
+            request_id="req1",
+            error=MagicMock(),
+            user_message_text="archived",
+            user_message_locale="en",
+        )
+        error.error.is_path.return_value = False
+        error.error.is_doc_archived.return_value = True
+        mock_dbx.files_paper_update.side_effect = error
+
+        with pytest.raises(ValidationError, match="archived"):
+            service.update_paper_doc("/doc.paper", b"content")
+
+    def test_update_doc_deleted(self, service, mock_dbx):
+        from dropbox_paper_cli.lib.errors import NotFoundError
+
+        error = dropbox.exceptions.ApiError(
+            request_id="req1",
+            error=MagicMock(),
+            user_message_text="deleted",
+            user_message_locale="en",
+        )
+        error.error.is_path.return_value = False
+        error.error.is_doc_archived.return_value = False
+        error.error.is_doc_deleted.return_value = True
+        mock_dbx.files_paper_update.side_effect = error
+
+        with pytest.raises(NotFoundError, match="deleted"):
+            service.update_paper_doc("/doc.paper", b"content")
+
+    def test_update_revision_mismatch(self, service, mock_dbx):
+        from dropbox_paper_cli.lib.errors import ValidationError
+
+        error = dropbox.exceptions.ApiError(
+            request_id="req1",
+            error=MagicMock(),
+            user_message_text="revision mismatch",
+            user_message_locale="en",
+        )
+        error.error.is_path.return_value = False
+        error.error.is_doc_archived.return_value = False
+        error.error.is_doc_deleted.return_value = False
+        error.error.is_revision_mismatch.return_value = True
+        mock_dbx.files_paper_update.side_effect = error
+
+        with pytest.raises(ValidationError, match="Revision mismatch"):
+            service.update_paper_doc("/doc.paper", b"content", policy="update", paper_revision=3)
+
+    def test_update_invalid_format(self, service):
+        from dropbox_paper_cli.lib.errors import ValidationError
+
+        with pytest.raises(ValidationError, match="Invalid import format"):
+            service.update_paper_doc("/doc.paper", b"content", import_format="rtf")
+
+    def test_update_invalid_policy(self, service):
+        from dropbox_paper_cli.lib.errors import ValidationError
+
+        with pytest.raises(ValidationError, match="Invalid update policy"):
+            service.update_paper_doc("/doc.paper", b"content", policy="replace")

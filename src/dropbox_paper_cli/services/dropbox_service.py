@@ -9,7 +9,20 @@ import dropbox.sharing
 
 from dropbox_paper_cli.lib.errors import NotFoundError, ValidationError
 from dropbox_paper_cli.lib.retry import with_retry
-from dropbox_paper_cli.models.items import DropboxItem
+from dropbox_paper_cli.models.items import DropboxItem, PaperCreateResult, PaperUpdateResult
+
+_IMPORT_FORMATS: dict[str, dropbox.files.ImportFormat] = {  # ty: ignore[invalid-assignment]
+    "markdown": dropbox.files.ImportFormat.markdown,
+    "html": dropbox.files.ImportFormat.html,
+    "plain_text": dropbox.files.ImportFormat.plain_text,
+}
+
+_UPDATE_POLICIES: dict[str, dropbox.files.PaperDocUpdatePolicy] = {  # ty: ignore[invalid-assignment]
+    "overwrite": dropbox.files.PaperDocUpdatePolicy.overwrite,
+    "update": dropbox.files.PaperDocUpdatePolicy.update,
+    "prepend": dropbox.files.PaperDocUpdatePolicy.prepend,
+    "append": dropbox.files.PaperDocUpdatePolicy.append,
+}
 
 
 class DropboxService:
@@ -206,3 +219,113 @@ class DropboxService:
             return meta.id
         except dropbox.exceptions.ApiError as e:
             raise NotFoundError(f"Could not resolve URL: {url}") from e
+
+    # ── Write Content ─────────────────────────────────────────────
+
+    @with_retry()
+    def create_paper_doc(
+        self,
+        path: str,
+        content: bytes,
+        *,
+        import_format: str = "markdown",
+    ) -> PaperCreateResult:
+        """Create a new Paper document.
+
+        Args:
+            path: Dropbox path (must end with .paper).
+            content: Document content as bytes.
+            import_format: "markdown", "html", or "plain_text".
+
+        Returns:
+            PaperCreateResult with url, result_path, file_id, paper_revision.
+
+        Raises:
+            ValidationError: If the path or format is invalid, email is
+                unverified, or Paper is disabled.
+        """
+        fmt = _IMPORT_FORMATS.get(import_format)
+        if fmt is None:
+            raise ValidationError(
+                f"Invalid import format: {import_format!r}. "
+                f"Choose from: {', '.join(_IMPORT_FORMATS)}"
+            )
+        try:
+            result = self._dbx.files_paper_create(content, path, fmt)
+            return PaperCreateResult(
+                url=result.url,
+                result_path=result.result_path,
+                file_id=result.file_id,
+                paper_revision=result.paper_revision,
+            )
+        except dropbox.exceptions.ApiError as e:
+            err = e.error
+            if hasattr(err, "is_invalid_file_extension") and err.is_invalid_file_extension():
+                raise ValidationError(f"Path must end with .paper: {path}") from e
+            if hasattr(err, "is_invalid_path") and err.is_invalid_path():
+                raise ValidationError(f"Invalid path: {path}") from e
+            if hasattr(err, "is_email_unverified") and err.is_email_unverified():
+                raise ValidationError("Email must be verified to create Paper documents") from e
+            if hasattr(err, "is_paper_disabled") and err.is_paper_disabled():
+                raise ValidationError("Paper is disabled for this team") from e
+            raise
+
+    @with_retry()
+    def update_paper_doc(
+        self,
+        path: str,
+        content: bytes,
+        *,
+        import_format: str = "markdown",
+        policy: str = "overwrite",
+        paper_revision: int | None = None,
+    ) -> PaperUpdateResult:
+        """Update an existing Paper document.
+
+        Args:
+            path: Dropbox path or file ID.
+            content: New document content as bytes.
+            import_format: "markdown", "html", or "plain_text".
+            policy: "overwrite", "update", "prepend", or "append".
+            paper_revision: Required when policy is "update".
+
+        Returns:
+            PaperUpdateResult with the new paper_revision.
+
+        Raises:
+            ValidationError: If format/policy is invalid, revision is missing,
+                revision mismatches, or the document is archived.
+            NotFoundError: If the path does not exist or the document is deleted.
+        """
+        fmt = _IMPORT_FORMATS.get(import_format)
+        if fmt is None:
+            raise ValidationError(
+                f"Invalid import format: {import_format!r}. "
+                f"Choose from: {', '.join(_IMPORT_FORMATS)}"
+            )
+        pol = _UPDATE_POLICIES.get(policy)
+        if pol is None:
+            raise ValidationError(
+                f"Invalid update policy: {policy!r}. Choose from: {', '.join(_UPDATE_POLICIES)}"
+            )
+        if policy == "update" and paper_revision is None:
+            raise ValidationError("--revision is required when policy is 'update'")
+        try:
+            result = self._dbx.files_paper_update(
+                content, path, fmt, pol, paper_revision=paper_revision
+            )
+            return PaperUpdateResult(paper_revision=result.paper_revision)
+        except dropbox.exceptions.ApiError as e:
+            err = e.error
+            if hasattr(err, "is_path") and err.is_path():
+                raise NotFoundError(f"Path not found: {path}") from e
+            if hasattr(err, "is_doc_archived") and err.is_doc_archived():
+                raise ValidationError(f"Document is archived: {path}") from e
+            if hasattr(err, "is_doc_deleted") and err.is_doc_deleted():
+                raise NotFoundError(f"Document is deleted: {path}") from e
+            if hasattr(err, "is_revision_mismatch") and err.is_revision_mismatch():
+                raise ValidationError(
+                    f"Revision mismatch: the document has been modified since revision "
+                    f"{paper_revision}. Use 'overwrite' policy or provide the current revision."
+                ) from e
+            raise
