@@ -54,6 +54,7 @@ Existing (unchanged):
 | `_client` | `httpx.AsyncClient` | Shared HTTP client with connection pooling |
 | `_token` | `AuthToken` | Current OAuth2 credentials (mutable on refresh) |
 | `_app_key` | `str` | Dropbox app key for token refresh |
+| `_token_persister` | `Callable[[AuthToken], None] \| None` | Optional callback to persist refreshed tokens to disk (e.g., `auth_service.save_token`) |
 | `_refresh_lock` | `asyncio.Lock` | Coordinates concurrent token refresh |
 | `_logger` | `logging.Logger` | DEBUG-level HTTP request logging |
 
@@ -61,7 +62,7 @@ Existing (unchanged):
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(token: AuthToken, app_key: str)` | Create client with auth state |
+| `__init__` | `(token: AuthToken, app_key: str, *, token_persister: Callable[[AuthToken], None] \| None = None)` | Create client with auth state and optional token persistence callback |
 | `__aenter__` | `async def` | Initialize httpx.AsyncClient |
 | `__aexit__` | `async def` | Close httpx.AsyncClient |
 | `rpc` | `async def rpc(endpoint: str, params: dict \| None = None, *, timeout: Timeout = METADATA_TIMEOUT) -> dict` | RPC endpoint call (JSON in/out) |
@@ -144,7 +145,7 @@ def from_api(cls, data: dict) -> "DropboxItem":
         path_lower=data.get("path_lower", ""),
         type="folder" if tag == "folder" else "file",
         size=data.get("size"),
-        server_modified=data.get("server_modified"),
+        server_modified=datetime.fromisoformat(data["server_modified"]) if data.get("server_modified") else None,
         rev=data.get("rev"),
         content_hash=data.get("content_hash"),
     )
@@ -160,7 +161,7 @@ def from_api(cls, data: dict) -> "DropboxItem":
 | `path_lower` | `metadata.path_lower` | `"path_lower"` | Same |
 | `type` | `isinstance(m, FolderMetadata)` | `".tag"` value | `"folder"` or `"file"` |
 | `size` | `metadata.size` | `"size"` | Files only; None for folders |
-| `server_modified` | `metadata.server_modified` | `"server_modified"` | Files only; ISO 8601 string |
+| `server_modified` | `metadata.server_modified` | `"server_modified"` | Files only; ISO 8601 string → parse to `datetime` via `datetime.fromisoformat()` |
 | `rev` | `metadata.rev` | `"rev"` | Files only |
 | `content_hash` | `metadata.content_hash` | `"content_hash"` | Files only |
 

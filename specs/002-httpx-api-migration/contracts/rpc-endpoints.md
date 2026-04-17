@@ -280,12 +280,13 @@ POST /2/sharing/list_folder_members
         }
     ],
     "cursor": "ZtkX...",
+    "has_more": false,
     "invitees": [],
     "groups": []
 }
 ```
 
-**Pagination**: When cursor is present, call `sharing/list_folder_members/continue`.
+**Pagination**: When `has_more` is `true`, call `sharing/list_folder_members/continue` with the `cursor` value.
 
 ### sharing/list_folder_members/continue
 
@@ -358,6 +359,13 @@ POST /2/users/get_current_account
 | 409 | `from_lookup/not_found` | `NotFoundError` |
 | 409 | `access_error` | `PermissionError` |
 | 409 | `shared_link_already_exists` | Return existing link (special handling) |
+| 409 | `non_exportable` | `ValidationError("Not a Paper document")` |
+| 409 | `invalid_file_extension` | `ValidationError("Path must end with .paper")` |
+| 409 | `email_unverified` | `ValidationError("Email must be verified")` |
+| 409 | `paper_disabled` | `ValidationError("Paper is disabled for this team")` |
+| 409 | `doc_archived` | `ValidationError("Document is archived")` |
+| 409 | `doc_deleted` | `NotFoundError("Document is deleted")` |
+| 409 | `revision_mismatch` | `ValidationError("Revision mismatch")` |
 | 400 | (any) | `ValidationError` |
 | 401 | (any) | Token refresh → retry |
 | 403 | (any) | `PermissionError` |
