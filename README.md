@@ -43,7 +43,14 @@ Under the **Permissions** tab, enable:
 
 ### 2. Configure Credentials
 
-Create the config file at `~/.config/dropbox-paper-cli/config.json`:
+Use the CLI to set your app credentials:
+
+```bash
+paper config set --app-key YOUR_APP_KEY
+paper config set --app-secret YOUR_APP_SECRET  # optional
+```
+
+Or create the config file manually at `~/.config/dropbox-paper-cli/config.json`:
 
 ```json
 {
@@ -54,12 +61,7 @@ Create the config file at `~/.config/dropbox-paper-cli/config.json`:
 
 `app_secret` is optional — if omitted, the PKCE flow is used (no secret needed, recommended for personal use).
 
-Alternatively, set environment variables:
-
-```bash
-export DROPBOX_APP_KEY="YOUR_APP_KEY"
-export DROPBOX_APP_SECRET="YOUR_APP_SECRET"  # optional
-```
+Environment variables `DROPBOX_APP_KEY` / `DROPBOX_APP_SECRET` take priority over the config file.
 
 ### 3. Authenticate
 
@@ -93,6 +95,15 @@ paper files read "/path/to/document.paper"
 paper auth login     # OAuth2 login flow
 paper auth logout    # Clear stored credentials
 paper auth status    # Check authentication state
+```
+
+### Configuration
+
+```bash
+paper config set --app-key KEY       # Set Dropbox app key
+paper config set --app-secret SECRET # Set Dropbox app secret
+paper config show                    # Show current config
+paper config path                    # Show config file path
 ```
 
 ### File Operations
