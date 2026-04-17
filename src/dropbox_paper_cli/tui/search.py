@@ -41,10 +41,11 @@ class SearchApp(App):
     """
 
     BINDINGS = [
-        Binding("q", "quit", "Quit"),
-        Binding("l", "get_link", "Get Link"),
-        Binding("o", "open_link", "Open in Browser"),
-        Binding("r", "read_doc", "Read Doc"),
+        Binding("escape", "quit", "Quit", priority=True),
+        Binding("f2", "get_link", "Get Link", priority=True),
+        Binding("f3", "open_link", "Open in Browser", priority=True),
+        Binding("f4", "read_doc", "Read Doc", priority=True),
+        Binding("down", "focus_table", "Focus Table", show=False),
     ]
 
     status_text: reactive[str] = reactive("")
@@ -90,6 +91,17 @@ class SearchApp(App):
         if self._debounce_timer is not None:
             self._debounce_timer.stop()
         self._debounce_timer = self.set_timer(0.3, lambda: self._run_search(event.value))
+
+    def on_input_submitted(self, _event: Input.Submitted) -> None:
+        """When Enter is pressed in the search input, move focus to results."""
+        table = self.query_one("#results-table", DataTable)
+        if table.row_count > 0:
+            table.focus()
+
+    def action_focus_table(self) -> None:
+        table = self.query_one("#results-table", DataTable)
+        if table.row_count > 0:
+            table.focus()
 
     def _run_search(self, query: str) -> None:
         query = query.strip()
