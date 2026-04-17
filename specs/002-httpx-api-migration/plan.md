@@ -97,7 +97,7 @@ src/dropbox_paper_cli/
 │   ├── sharing_service.py          # REWRITTEN: all async, direct HTTP API calls
 │   └── sync_orchestrator.py        # REWRITTEN: asyncio.gather + Semaphore
 └── tui/
-    └── search.py                   # UNCHANGED (already async via Textual)
+    └── search.py                   # MODIFIED: async bridging in @work methods, SDK removal
 
 tests/
 ├── conftest.py                     # MODIFIED: httpx mock fixtures replace SDK mocks

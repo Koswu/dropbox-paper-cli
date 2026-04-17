@@ -13,7 +13,7 @@ As a user of the `paper` CLI, I want all existing commands (browse, organize, re
 
 **Why this priority**: This is the foundational requirement. If existing behavior breaks, the migration fails regardless of any performance improvements. Every CLI user depends on these operations working reliably.
 
-**Independent Test**: Can be fully tested by running every existing CLI command (`paper ls`, `paper mv`, `paper cp`, `paper rm`, `paper mkdir`, `paper cat`, `paper create`, `paper update`, `paper share`, `paper search`, `paper sync`) and verifying identical output and behavior against the current SDK-based implementation.
+**Independent Test**: Can be fully tested by running every existing CLI command (`paper files list`, `paper files move`, `paper files copy`, `paper files delete`, `paper files create-folder`, `paper files read`, `paper files create`, `paper files write`, `paper sharing info`, `paper sharing link`, `paper cache sync`, `paper search`) and verifying identical output and behavior against the current SDK-based implementation. (Shorthand aliases like `paper ls`, `paper mv`, etc. are used in acceptance scenarios below for brevity.)
 
 **Acceptance Scenarios**:
 

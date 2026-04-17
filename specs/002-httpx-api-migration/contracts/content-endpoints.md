@@ -25,7 +25,7 @@ Used to export Paper documents as Markdown.
 ```
 POST https://content.dropboxapi.com/2/files/export
 Authorization: Bearer {access_token}
-Dropbox-API-Arg: {"path": "/path/to/document.paper"}
+Dropbox-API-Arg: {"path": "/path/to/document.paper", "export_format": "markdown"}
 ```
 
 **Request Body**: Empty
