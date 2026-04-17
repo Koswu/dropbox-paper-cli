@@ -23,6 +23,8 @@ class AuthToken:
     account_id: str
     uid: str | None = None
     token_type: str = "bearer"
+    root_namespace_id: str | None = None
+    home_namespace_id: str | None = None
 
     def __post_init__(self) -> None:
         """Validate required fields after dataclass initialization."""
@@ -49,6 +51,8 @@ class AuthToken:
             "account_id": self.account_id,
             "uid": self.uid,
             "token_type": self.token_type,
+            "root_namespace_id": self.root_namespace_id,
+            "home_namespace_id": self.home_namespace_id,
         }
 
     @classmethod
@@ -61,4 +65,6 @@ class AuthToken:
             account_id=data["account_id"],
             uid=data.get("uid"),
             token_type=data.get("token_type", "bearer"),
+            root_namespace_id=data.get("root_namespace_id"),
+            home_namespace_id=data.get("home_namespace_id"),
         )
