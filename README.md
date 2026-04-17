@@ -1,5 +1,9 @@
 # dropbox-paper-cli
 
+[![PyPI](https://img.shields.io/pypi/v/dropbox-paper-cli)](https://pypi.org/project/dropbox-paper-cli/)
+[![Python](https://img.shields.io/pypi/pyversions/dropbox-paper-cli)](https://pypi.org/project/dropbox-paper-cli/)
+[![License: MIT](https://img.shields.io/pypi/l/dropbox-paper-cli)](https://github.com/Koswu/dropbox-paper-cli/blob/main/LICENSE)
+
 A Python CLI tool for managing Dropbox Paper documents from the terminal — browse files, read Paper docs as Markdown, and search across your entire workspace with a local metadata cache.
 
 ## Features
@@ -17,10 +21,13 @@ A Python CLI tool for managing Dropbox Paper documents from the terminal — bro
 Requires Python 3.12+.
 
 ```bash
-# Install with uv (recommended)
-uv tool install .
+# Install from PyPI (recommended)
+pip install dropbox-paper-cli
 
-# Or with pip
+# Or with uv
+uv tool install dropbox-paper-cli
+
+# Or install from source
 pip install .
 ```
 
@@ -160,7 +167,9 @@ Follows the [XDG Base Directory Specification](https://specifications.freedeskto
 ## Development
 
 ```bash
-# Install dev dependencies
+# Clone and install dev dependencies
+git clone https://github.com/Koswu/dropbox-paper-cli.git
+cd dropbox-paper-cli
 uv sync --group dev
 
 # Run tests
@@ -169,6 +178,13 @@ uv run pytest
 # Lint & format
 uv run ruff check src/ tests/
 uv run ruff format src/ tests/
+
+# Type check
+uv run ty check
+
+# Pre-commit hooks (ruff + ty)
+uv run pre-commit install
+uv run pre-commit run --all-files
 ```
 
 ## License
