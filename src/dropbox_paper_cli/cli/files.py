@@ -10,7 +10,7 @@ import typer
 
 from dropbox_paper_cli.cli.common import get_dropbox_service as _get_dropbox_service
 from dropbox_paper_cli.cli.common import get_formatter as _get_formatter
-from dropbox_paper_cli.lib.errors import AppError
+from dropbox_paper_cli.cli.common import safe_command
 from dropbox_paper_cli.lib.url_parser import is_dropbox_url, resolve_target
 from dropbox_paper_cli.services.dropbox_service import DropboxService
 
@@ -54,7 +54,7 @@ def list_cmd(
 ) -> None:
     """List files and folders at a Dropbox path."""
     fmt = _get_formatter(ctx)
-    try:
+    with safe_command(fmt):
         svc = _get_dropbox_service()
         items = svc.list_folder(path, recursive=recursive)
 
@@ -91,13 +91,6 @@ def list_cmd(
                         size_str = f"  {item.size} B"
                 typer.echo(f"{icon} {name:<30s} {modified}{size_str}")
 
-    except AppError as e:
-        fmt.error(str(e), code=e.code)
-        raise typer.Exit(code=e.exit_code) from None
-    except Exception as e:
-        fmt.error(str(e), code="GENERAL_FAILURE")
-        raise typer.Exit(code=1) from None
-
 
 @files_app.command()
 def metadata(
@@ -106,7 +99,7 @@ def metadata(
 ) -> None:
     """Get detailed metadata for a specific file or folder."""
     fmt = _get_formatter(ctx)
-    try:
+    with safe_command(fmt):
         svc = _get_dropbox_service()
         resolved = _resolve(target, svc)
         item = svc.get_metadata(resolved)
@@ -136,16 +129,6 @@ def metadata(
             if item.rev:
                 typer.echo(f"Rev:      {item.rev}")
 
-    except AppError as e:
-        fmt.error(str(e), code=e.code)
-        raise typer.Exit(code=e.exit_code) from None
-    except ValueError as e:
-        fmt.error(str(e), code="URL_PARSE_ERROR")
-        raise typer.Exit(code=4) from None
-    except Exception as e:
-        fmt.error(str(e), code="GENERAL_FAILURE")
-        raise typer.Exit(code=1) from None
-
 
 @files_app.command()
 def link(
@@ -154,7 +137,7 @@ def link(
 ) -> None:
     """Get or create a sharing link for a file."""
     fmt = _get_formatter(ctx)
-    try:
+    with safe_command(fmt):
         svc = _get_dropbox_service()
         resolved = _resolve(target, svc)
         result = svc.get_or_create_sharing_link(resolved)
@@ -163,16 +146,6 @@ def link(
             fmt.success(result)
         else:
             typer.echo(result["url"])
-
-    except AppError as e:
-        fmt.error(str(e), code=e.code)
-        raise typer.Exit(code=e.exit_code) from None
-    except ValueError as e:
-        fmt.error(str(e), code="URL_PARSE_ERROR")
-        raise typer.Exit(code=4) from None
-    except Exception as e:
-        fmt.error(str(e), code="GENERAL_FAILURE")
-        raise typer.Exit(code=1) from None
 
 
 # ── Organize Commands (US3) ───────────────────────────────────────
@@ -185,7 +158,7 @@ def create_folder_cmd(
 ) -> None:
     """Create a new folder."""
     fmt = _get_formatter(ctx)
-    try:
+    with safe_command(fmt):
         svc = _get_dropbox_service()
         item = svc.create_folder(path)
 
@@ -204,13 +177,6 @@ def create_folder_cmd(
             typer.echo(f"  Path: {item.path_display}")
             typer.echo(f"  ID:   {item.id}")
 
-    except AppError as e:
-        fmt.error(str(e), code=e.code)
-        raise typer.Exit(code=e.exit_code) from None
-    except Exception as e:
-        fmt.error(str(e), code="GENERAL_FAILURE")
-        raise typer.Exit(code=1) from None
-
 
 @files_app.command()
 def move(
@@ -220,7 +186,7 @@ def move(
 ) -> None:
     """Move a file or folder to a new location."""
     fmt = _get_formatter(ctx)
-    try:
+    with safe_command(fmt):
         svc = _get_dropbox_service()
         resolved_src = _resolve(source, svc)
         item = svc.move_item(resolved_src, destination)
@@ -240,16 +206,6 @@ def move(
             typer.echo(f"  From: {resolved_src}")
             typer.echo(f"  To:   {item.path_display}")
 
-    except AppError as e:
-        fmt.error(str(e), code=e.code)
-        raise typer.Exit(code=e.exit_code) from None
-    except ValueError as e:
-        fmt.error(str(e), code="URL_PARSE_ERROR")
-        raise typer.Exit(code=4) from None
-    except Exception as e:
-        fmt.error(str(e), code="GENERAL_FAILURE")
-        raise typer.Exit(code=1) from None
-
 
 @files_app.command()
 def copy(
@@ -259,7 +215,7 @@ def copy(
 ) -> None:
     """Copy a file or folder to a new location."""
     fmt = _get_formatter(ctx)
-    try:
+    with safe_command(fmt):
         svc = _get_dropbox_service()
         resolved_src = _resolve(source, svc)
         item = svc.copy_item(resolved_src, destination)
@@ -279,16 +235,6 @@ def copy(
             typer.echo(f"  To: {item.path_display}")
             typer.echo(f"  New ID: {item.id}")
 
-    except AppError as e:
-        fmt.error(str(e), code=e.code)
-        raise typer.Exit(code=e.exit_code) from None
-    except ValueError as e:
-        fmt.error(str(e), code="URL_PARSE_ERROR")
-        raise typer.Exit(code=4) from None
-    except Exception as e:
-        fmt.error(str(e), code="GENERAL_FAILURE")
-        raise typer.Exit(code=1) from None
-
 
 @files_app.command()
 def delete(
@@ -297,7 +243,7 @@ def delete(
 ) -> None:
     """Delete a file or folder."""
     fmt = _get_formatter(ctx)
-    try:
+    with safe_command(fmt):
         svc = _get_dropbox_service()
         resolved = _resolve(target, svc)
         item = svc.delete_item(resolved)
@@ -314,16 +260,6 @@ def delete(
         else:
             typer.echo(f'✓ Deleted "{item.name}"')
 
-    except AppError as e:
-        fmt.error(str(e), code=e.code)
-        raise typer.Exit(code=e.exit_code) from None
-    except ValueError as e:
-        fmt.error(str(e), code="URL_PARSE_ERROR")
-        raise typer.Exit(code=4) from None
-    except Exception as e:
-        fmt.error(str(e), code="GENERAL_FAILURE")
-        raise typer.Exit(code=1) from None
-
 
 # ── Read Command (US4) ────────────────────────────────────────────
 
@@ -335,7 +271,7 @@ def read(
 ) -> None:
     """Read and output Paper document content as Markdown."""
     fmt = _get_formatter(ctx)
-    try:
+    with safe_command(fmt):
         svc = _get_dropbox_service()
         resolved = _resolve(target, svc)
 
@@ -355,16 +291,6 @@ def read(
             )
         else:
             typer.echo(content, nl=False)
-
-    except AppError as e:
-        fmt.error(str(e), code=e.code)
-        raise typer.Exit(code=e.exit_code) from None
-    except ValueError as e:
-        fmt.error(str(e), code="URL_PARSE_ERROR")
-        raise typer.Exit(code=4) from None
-    except Exception as e:
-        fmt.error(str(e), code="GENERAL_FAILURE")
-        raise typer.Exit(code=1) from None
 
 
 # ── Write Commands ────────────────────────────────────────────────
@@ -401,7 +327,7 @@ def create(
 ) -> None:
     """Create a new Paper document from Markdown, HTML, or plain text."""
     fmt = _get_formatter(ctx)
-    try:
+    with safe_command(fmt):
         content = _read_content(file)
         svc = _get_dropbox_service()
         result = svc.create_paper_doc(path, content, import_format=import_format.value)
@@ -421,13 +347,6 @@ def create(
             typer.echo(f"  Path: {result.result_path}")
             typer.echo(f"  URL:  {result.url}")
             typer.echo(f"  ID:   {result.file_id}")
-
-    except AppError as e:
-        fmt.error(str(e), code=e.code)
-        raise typer.Exit(code=e.exit_code) from None
-    except Exception as e:
-        fmt.error(str(e), code="GENERAL_FAILURE")
-        raise typer.Exit(code=1) from None
 
 
 @files_app.command()
@@ -449,7 +368,7 @@ def write(
 ) -> None:
     """Update an existing Paper document's content."""
     fmt = _get_formatter(ctx)
-    try:
+    with safe_command(fmt):
         content = _read_content(file)
         svc = _get_dropbox_service()
         resolved = _resolve(target, svc)
@@ -475,13 +394,3 @@ def write(
             typer.echo(f"  Target:   {resolved}")
             typer.echo(f"  Policy:   {policy.value}")
             typer.echo(f"  Revision: {result.paper_revision}")
-
-    except AppError as e:
-        fmt.error(str(e), code=e.code)
-        raise typer.Exit(code=e.exit_code) from None
-    except ValueError as e:
-        fmt.error(str(e), code="URL_PARSE_ERROR")
-        raise typer.Exit(code=4) from None
-    except Exception as e:
-        fmt.error(str(e), code="GENERAL_FAILURE")
-        raise typer.Exit(code=1) from None

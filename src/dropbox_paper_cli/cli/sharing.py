@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 
 from dropbox_paper_cli.cli.common import get_formatter as _get_formatter
-from dropbox_paper_cli.lib.errors import AppError
+from dropbox_paper_cli.cli.common import safe_command
 from dropbox_paper_cli.lib.url_parser import is_dropbox_url, resolve_target
 from dropbox_paper_cli.services.auth_service import AuthService
 from dropbox_paper_cli.services.dropbox_service import DropboxService
@@ -28,7 +28,7 @@ def info(
 ) -> None:
     """Get sharing information for a shared folder."""
     fmt = _get_formatter(ctx)
-    try:
+    with safe_command(fmt):
         dbx_svc, share_svc = _get_services()
         resolved = resolve_target(target)
         if is_dropbox_url(resolved):
@@ -67,13 +67,3 @@ def info(
                 typer.echo(
                     f"  {m.display_name} ({m.email})  {' ' * max(0, 25 - len(m.display_name) - len(m.email))}{m.access_type}"
                 )
-
-    except AppError as e:
-        fmt.error(str(e), code=e.code)
-        raise typer.Exit(code=e.exit_code) from None
-    except ValueError as e:
-        fmt.error(str(e), code="URL_PARSE_ERROR")
-        raise typer.Exit(code=4) from None
-    except Exception as e:
-        fmt.error(str(e), code="GENERAL_FAILURE")
-        raise typer.Exit(code=1) from None
