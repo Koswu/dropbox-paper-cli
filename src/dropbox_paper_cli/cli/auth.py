@@ -118,6 +118,8 @@ def status(ctx: typer.Context) -> None:
         client = svc.get_client()
         account = client.users_get_current_account()
 
+        # Reload token — get_client() may have persisted a refreshed access token
+        token = svc.load_token() or token
         expires_str = datetime.fromtimestamp(token.expires_at, tz=UTC).isoformat()
 
         if fmt.json_mode:
