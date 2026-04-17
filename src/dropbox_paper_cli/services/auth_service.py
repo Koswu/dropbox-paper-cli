@@ -167,6 +167,8 @@ class AuthService:
                 home_ns = root_info.home_namespace_id
                 if root_ns != home_ns:
                     self._cached_path_root = dropbox.common.PathRoot.root(root_ns)
+                # Persist refreshed token (SDK may have auto-refreshed)
+                self._persist_refreshed_token(dbx, token)
             except Exception:
                 pass
             self._ns_detected = True
@@ -174,3 +176,19 @@ class AuthService:
         if self._cached_path_root is not None:
             dbx = dbx.with_path_root(self._cached_path_root)
         return dbx
+
+    def _persist_refreshed_token(self, dbx: dropbox.Dropbox, original: AuthToken) -> None:
+        """If the SDK auto-refreshed the access token, save the updated values."""
+        new_access = getattr(dbx, "_oauth2_access_token", None)
+        if not new_access or new_access == original.access_token:
+            return
+        new_expiry = getattr(dbx, "_oauth2_access_token_expiration", None)
+        expires_at = new_expiry.timestamp() if new_expiry else original.expires_at
+        self.save_token(
+            AuthToken(
+                access_token=new_access,
+                refresh_token=original.refresh_token,
+                account_id=original.account_id,
+                expires_at=expires_at,
+            )
+        )
