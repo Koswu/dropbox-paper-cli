@@ -55,7 +55,7 @@ As a user with a large Dropbox Paper workspace (hundreds or thousands of documen
 
 1. **Given** a user has never synced, **When** they run `paper sync`, **Then** a full sync completes and the local cache is populated with all metadata
 2. **Given** a user has previously synced, **When** they run `paper sync`, **Then** an incremental sync detects additions, modifications, and deletions since the last sync
-3. **Given** a workspace with 500+ items, **When** the user runs `paper sync`, **Then** the operation completes noticeably faster than with the previous synchronous SDK approach
+3. **Given** a workspace with 500+ items, **When** the user runs `paper sync`, **Then** the operation completes at least 30% faster than the previous SDK approach, using up to 20 concurrent async requests (configurable semaphore)
 4. **Given** a sync is in progress, **When** a transient network error occurs on one folder, **Then** that folder is retried and other folders continue syncing without interruption
 
 ---
@@ -97,7 +97,7 @@ As a project maintainer, I want the `dropbox` SDK package completely removed fro
 
 - What happens when the Dropbox API returns an unexpected JSON structure or missing fields? The client should handle gracefully with clear error messages rather than crashing.
 - What happens when a token refresh fails (e.g., refresh token revoked)? The user should see a clear message instructing them to re-authenticate.
-- What happens during concurrent async requests if the access token expires mid-batch? Only one refresh should occur and all pending requests should use the new token.
+- What happens during concurrent async requests if the access token expires mid-batch? The HTTP client MUST use an `asyncio.Lock` with a double-check pattern: the first task to receive a 401 acquires the lock and refreshes the token; concurrent tasks wait on the lock, then verify the token was already refreshed before retrying with the new token. Only one refresh occurs per expiry cycle.
 - What happens if the Dropbox API rate-limits specific endpoints differently? The retry logic should respect per-response `Retry-After` headers.
 - What happens when a Paper document export returns unexpected content encoding? The client should handle encoding gracefully.
 - What happens during sync when a folder is deleted server-side between the top-level listing and the folder's recursive listing? The error should be handled and the sync should continue.
@@ -109,16 +109,16 @@ As a project maintainer, I want the `dropbox` SDK package completely removed fro
 - **FR-001**: System MUST replace the `dropbox` Python SDK dependency with `httpx` for all HTTP communication with the Dropbox API
 - **FR-002**: System MUST implement OAuth2 PKCE flow by making direct HTTP requests to the Dropbox OAuth2 endpoints (`https://www.dropbox.com/oauth2/authorize` and `https://api.dropboxapi.com/oauth2/token`)
 - **FR-003**: System MUST implement OAuth2 Authorization Code flow via direct HTTP requests for environments that use app secrets
-- **FR-004**: System MUST automatically refresh expired access tokens using the stored refresh token via the token endpoint, without user intervention
-- **FR-005**: System MUST implement a centralized HTTP client layer that encapsulates all Dropbox API communication, including headers, authentication, content upload/download, and error parsing
+- **FR-004**: System MUST automatically refresh expired access tokens using the stored refresh token via the token endpoint, without user intervention; concurrent 401 responses MUST be coordinated via an `asyncio.Lock` with double-check pattern so that only one refresh occurs per expiry cycle
+- **FR-005**: System MUST implement a centralized async HTTP client layer (using httpx `AsyncClient`) that encapsulates all Dropbox API communication, including headers, authentication, content upload/download, and error parsing — all service methods MUST be `async def`
 - **FR-006**: System MUST support all current file and folder operations via direct Dropbox HTTP API calls: list folder (with pagination), get metadata, create folder, move, copy, delete
 - **FR-007**: System MUST support Paper document operations via direct API calls: export (as Markdown), create (with import format), update (with revision and policy)
 - **FR-008**: System MUST support sharing operations via direct API calls: create/get sharing links, get shared folder metadata, list folder members (with pagination)
 - **FR-009**: System MUST implement shared link URL resolution via the sharing API endpoint
 - **FR-010**: System MUST support team namespace detection and path root configuration via direct API calls to the users/get_current_account endpoint
 - **FR-011**: System MUST implement retry logic for transient HTTP errors (429, 500, 503, connection errors, timeouts) with exponential backoff and respect for `Retry-After` headers
-- **FR-012**: System MUST use async HTTP operations (via httpx `AsyncClient`) for the sync orchestrator to enable concurrent folder listing instead of the current thread-pool approach
-- **FR-013**: System MUST provide configurable timeouts for all HTTP requests, with sensible defaults (connection timeout and read timeout)
+- **FR-012**: System MUST use a single httpx `AsyncClient` for all API operations (not only the sync orchestrator), with `asyncio.run()` at each CLI command entry point as the sync/async boundary; the sync orchestrator replaces the current thread-pool approach with `asyncio.gather()` or equivalent async concurrency, throttled by an `asyncio.Semaphore(20)` (configurable) to match the current proven concurrency level and avoid triggering API rate limits
+- **FR-013**: System MUST provide configurable timeouts for all HTTP requests with two profiles: metadata/RPC endpoints default to `connect=5s, read=5s`; content-download and content-upload endpoints default to `connect=5s, read=30s`
 - **FR-014**: System MUST use connection pooling to efficiently reuse HTTP connections across multiple API calls
 - **FR-015**: System MUST preserve the existing token file format and storage mechanism (JSON file with 0600 permissions, atomic writes) so that users do not need to re-authenticate after the migration
 - **FR-016**: System MUST maintain all existing error types (`NotFoundError`, `ValidationError`, `AuthenticationError`) and map HTTP response codes and Dropbox API error structures to these types
@@ -126,6 +126,7 @@ As a project maintainer, I want the `dropbox` SDK package completely removed fro
 - **FR-018**: System MUST handle the Dropbox API's content-upload endpoints (which accept data in the request body with parameters in a special header) correctly
 - **FR-019**: System MUST update the model layer to parse Dropbox API JSON responses directly instead of relying on SDK metadata objects
 - **FR-020**: System MUST ensure all existing tests pass after migration, with test mocks updated from SDK object mocks to HTTP response mocks
+- **FR-021**: System MUST log all HTTP requests at DEBUG level (method, URL, status code, duration) via Python's `logging` module; logs are hidden by default and visible when the user sets `PAPER_LOG_LEVEL=DEBUG` or passes `--verbose`
 
 ### Key Entities
 
@@ -145,7 +146,7 @@ As a project maintainer, I want the `dropbox` SDK package completely removed fro
 - **SC-005**: Transient errors (rate limits, server errors, timeouts) are retried automatically — users experience fewer failed operations on unreliable networks
 - **SC-006**: Token refresh occurs transparently — users are never prompted to re-authenticate due to expired access tokens (only if the refresh token itself is revoked)
 - **SC-007**: Existing authenticated users can continue using the CLI after updating without needing to re-authenticate (token file compatibility preserved)
-- **SC-008**: Sequential multi-step operations (e.g., listing a folder then reading a document) feel snappier — average end-to-end time for common workflows improves measurably
+- **SC-008**: Sequential multi-step operations (e.g., listing a folder then reading a document) complete within timeout bounds — metadata calls respond within 5s and content operations within 30s under normal conditions
 
 ## Assumptions
 
@@ -155,5 +156,15 @@ As a project maintainer, I want the `dropbox` SDK package completely removed fro
 - Existing integration tests that hit the real Dropbox API will continue to work since the API endpoints are the same; only the transport layer changes
 - The `httpx` library is production-ready and provides the async capabilities, connection pooling, and timeout controls needed for this migration
 - The Dropbox API uses standard HTTP status codes for error signaling (401 for auth errors, 409 for endpoint-specific errors, 429 for rate limits, 500/503 for server errors)
-- The current CLI's synchronous command execution model (via Typer) is compatible with running async httpx calls internally (e.g., using `asyncio.run()` at the boundary)
+- The current CLI's synchronous command execution model (via Typer) is compatible with running async httpx calls internally; each CLI command entry point calls `asyncio.run()` to bridge into the all-async service layer
 - Team namespace detection logic (root vs. home namespace) works identically whether accessed via SDK or direct API, since the SDK is just a wrapper around the same API
+
+## Clarifications
+
+### Session 2026-04-18
+
+- Q: Should the HTTP client use AsyncClient for all operations (all-async) or only for the sync orchestrator (hybrid)? → A: All-async — single AsyncClient for all operations, all service methods are `async def`, `asyncio.run()` at each CLI command entry point
+- Q: What mechanism coordinates concurrent token refresh when multiple async tasks receive 401 simultaneously? → A: `asyncio.Lock` with double-check pattern — first task acquires lock and refreshes, others wait then retry with new token
+- Q: What is the maximum async concurrency limit for the sync orchestrator? → A: `asyncio.Semaphore(20)` (configurable), matching the current thread pool size to avoid rate-limit spikes
+- Q: What are the default timeout values for HTTP requests? → A: Metadata/RPC endpoints: `connect=5s, read=5s`; content-download/upload endpoints: `connect=5s, read=30s`
+- Q: Should the HTTP client layer include observability/logging? → A: DEBUG-level request/response logging (method, URL, status code, duration) for all API calls; visible only via `--verbose` flag or `PAPER_LOG_LEVEL=DEBUG` env var
