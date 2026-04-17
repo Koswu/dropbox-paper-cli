@@ -192,7 +192,9 @@ class TestGetOrCreateSharingLink:
         shared_link_meta.url = "https://www.dropbox.com/scl/fi/abc123/test.paper?rlkey=existing"
         shared_link_meta.name = "test.paper"
         shared_link_meta.id = "id:abc123"
-        error.error.get_shared_link_already_exists.return_value.get_metadata.return_value = shared_link_meta
+        error.error.get_shared_link_already_exists.return_value.get_metadata.return_value = (
+            shared_link_meta
+        )
         mock_dbx.sharing_create_shared_link_with_settings.side_effect = error
 
         result = service.get_or_create_sharing_link("/test.paper")

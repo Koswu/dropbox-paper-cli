@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 import dropbox
+import dropbox.common
 from dropbox.oauth import DropboxOAuth2FlowNoRedirect
 
 from dropbox_paper_cli.lib.config import CONFIG_DIR, TOKEN_PATH, get_app_key, get_app_secret

@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 
 # ── Migrations ────────────────────────────────────────────────────
 
+
 def _get_current_version(conn: sqlite3.Connection) -> int:
     """Return the highest applied schema version, or 0 if none."""
     try:
@@ -117,9 +118,7 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE metadata SET item_type = 'paper' WHERE is_dir = 0 AND name LIKE '%.paper'")
 
     # Recreate FTS triggers
-    conn.executescript(
-        _FTS_TRIGGER_INSERT + _FTS_TRIGGER_DELETE + _FTS_TRIGGER_UPDATE
-    )
+    conn.executescript(_FTS_TRIGGER_INSERT + _FTS_TRIGGER_DELETE + _FTS_TRIGGER_UPDATE)
 
     conn.execute("INSERT OR REPLACE INTO schema_version (version) VALUES (2)")
     conn.commit()

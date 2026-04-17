@@ -14,8 +14,10 @@ paper = "dropbox_paper_cli.app:app"
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.5.1",
     "pytest>=8.0",
     "ruff>=0.11.0",
+    "ty>=0.0.31",
 ]
 
 [tool.pytest.ini_options]

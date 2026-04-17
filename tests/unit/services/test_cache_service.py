@@ -161,9 +161,7 @@ class TestFullSyncWithSubfolders:
             [child_file], cursor="folder_cursor"
         )
 
-        svc = CacheService(
-            conn=conn, client=mock_client, client_factory=lambda: worker_mock
-        )
+        svc = CacheService(conn=conn, client=mock_client, client_factory=lambda: worker_mock)
         result = svc.sync(concurrency=1)
 
         # root_file + folder from top-level + child from worker
@@ -173,18 +171,14 @@ class TestFullSyncWithSubfolders:
 
     def test_saves_per_folder_cursors(self, conn, mock_client):
         folder = _make_folder_entry()
-        mock_client.files_list_folder.return_value = _make_list_result(
-            [folder], cursor="top"
-        )
+        mock_client.files_list_folder.return_value = _make_list_result([folder], cursor="top")
 
         worker_mock = MagicMock()
         worker_mock.files_list_folder.return_value = _make_list_result(
             [], cursor="folder_cursor_saved"
         )
 
-        svc = CacheService(
-            conn=conn, client=mock_client, client_factory=lambda: worker_mock
-        )
+        svc = CacheService(conn=conn, client=mock_client, client_factory=lambda: worker_mock)
         svc.sync(concurrency=1)
 
         row = conn.execute(
@@ -231,9 +225,7 @@ class TestIncrementalSync:
             cursor="new_folder_cursor",
         )
 
-        svc = CacheService(
-            conn=conn, client=mock_client, client_factory=lambda: worker_mock
-        )
+        svc = CacheService(conn=conn, client=mock_client, client_factory=lambda: worker_mock)
         result = svc.sync(concurrency=1)
 
         assert result.sync_type == "incremental"
@@ -258,18 +250,14 @@ class TestIncrementalSync:
         folder = _make_folder_entry()
         deleted = _make_deleted_entry(path_lower="/project/deleted.paper")
 
-        mock_client.files_list_folder.return_value = _make_list_result(
-            [folder], cursor="top"
-        )
+        mock_client.files_list_folder.return_value = _make_list_result([folder], cursor="top")
 
         worker_mock = MagicMock()
         worker_mock.files_list_folder_continue.return_value = _make_list_result(
             [deleted], cursor="cursor2"
         )
 
-        svc = CacheService(
-            conn=conn, client=mock_client, client_factory=lambda: worker_mock
-        )
+        svc = CacheService(conn=conn, client=mock_client, client_factory=lambda: worker_mock)
         result = svc.sync(concurrency=1)
         assert result.removed >= 1
 
@@ -325,9 +313,7 @@ class TestSyncRoot:
         svc = CacheService(conn=conn, client=mock_client)
         svc.sync(path="/my/path")
 
-        row = conn.execute(
-            "SELECT cursor FROM sync_state WHERE key = 'meta:sync_root'"
-        ).fetchone()
+        row = conn.execute("SELECT cursor FROM sync_state WHERE key = 'meta:sync_root'").fetchone()
         assert row[0] == "/my/path"
 
 

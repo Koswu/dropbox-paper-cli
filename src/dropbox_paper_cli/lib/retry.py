@@ -5,7 +5,7 @@ from __future__ import annotations
 import functools
 import time
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import dropbox.exceptions
 
@@ -63,8 +63,9 @@ def with_retry(
                         )
                     time.sleep(delay)
             # Should not reach here, but just in case
-            raise last_exception  # type: ignore[misc]
+            assert last_exception is not None
+            raise last_exception
 
-        return wrapper  # type: ignore[return-value]
+        return cast(F, wrapper)
 
     return decorator
