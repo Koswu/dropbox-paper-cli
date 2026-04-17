@@ -21,14 +21,14 @@ A Python CLI tool for managing Dropbox Paper documents from the terminal — bro
 Requires Python 3.12+.
 
 ```bash
-# Install from PyPI (recommended)
-pip install dropbox-paper-cli
+# Run directly with uvx (no install needed)
+uvx dropbox-paper-cli --help
 
-# Or with uv
+# Or install with uv (recommended)
 uv tool install dropbox-paper-cli
 
-# Or install from source
-pip install .
+# Or with pip
+pip install dropbox-paper-cli
 ```
 
 ## Setup
