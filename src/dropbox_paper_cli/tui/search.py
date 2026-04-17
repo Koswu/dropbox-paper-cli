@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import webbrowser
 from pathlib import Path
@@ -155,9 +156,9 @@ class SearchApp(App):
             conn.close()
             self._results = results
             self.call_from_thread(self._update_table, results)
-            self.call_from_thread(setattr, self, "status_text", f"{len(results)} result(s)")
+            self.call_from_thread(self._set_status_safe, f"{len(results)} result(s)")
         except Exception as e:
-            self.call_from_thread(setattr, self, "status_text", f"Search error: {e}")
+            self.call_from_thread(self._set_status_safe, f"Search error: {e}")
 
     def _update_table(self, results: list[CachedMetadata]) -> None:
         table = self.query_one("#results-table", DataTable)
@@ -167,11 +168,19 @@ class SearchApp(App):
             name = f"{r.name}/" if r.is_dir else r.name
             table.add_row(icon, r.item_type, name, r.path_display, key=r.id)
 
+    def _set_status_safe(self, text: str) -> None:
+        """Set status text only when spinner is not active (avoids overwriting spinner)."""
+        if self._spinner_timer is None:
+            self.status_text = text
+
     def _get_selected(self) -> CachedMetadata | None:
         table = self.query_one("#results-table", DataTable)
-        if table.cursor_row is None or table.cursor_row >= len(self._results):
+        if table.row_count == 0 or not self._results:
             return None
-        row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
+        try:
+            row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
+        except Exception:
+            return None
         for r in self._results:
             if r.id == row_key.value:
                 return r
@@ -189,10 +198,10 @@ class SearchApp(App):
     def action_get_link(self) -> None:
         item = self._get_selected()
         if item is None:
-            self.status_text = "No item selected"
+            self.notify("No item selected — select a row first", severity="warning")
             return
         if item.is_dir:
-            self.status_text = "Sharing links not supported for folders"
+            self.notify("Sharing links not supported for folders", severity="warning")
             return
         self._start_spinner(f"Getting link for {item.name}...")
         self._fetch_link(item)
@@ -205,17 +214,19 @@ class SearchApp(App):
             url = result["url"]
             self.call_from_thread(self._stop_spinner)
             self.call_from_thread(setattr, self, "status_text", f"🔗 {url}")
+            self.call_from_thread(self.notify, f"Link: {url}", severity="information")
         except Exception as e:
             self.call_from_thread(self._stop_spinner)
             self.call_from_thread(setattr, self, "status_text", f"Error: {e}")
+            self.call_from_thread(self.notify, f"Error: {e}", severity="error")
 
     def action_open_link(self) -> None:
         item = self._get_selected()
         if item is None:
-            self.status_text = "No item selected"
+            self.notify("No item selected — select a row first", severity="warning")
             return
         if item.is_dir:
-            self.status_text = "Cannot open folders in browser"
+            self.notify("Cannot open folders in browser", severity="warning")
             return
         self._start_spinner(f"Opening {item.name} in browser...")
         self._open_in_browser(item)
@@ -232,14 +243,15 @@ class SearchApp(App):
         except Exception as e:
             self.call_from_thread(self._stop_spinner)
             self.call_from_thread(setattr, self, "status_text", f"Error: {e}")
+            self.call_from_thread(self.notify, f"Error: {e}", severity="error")
 
     def action_read_doc(self) -> None:
         item = self._get_selected()
         if item is None:
-            self.status_text = "No item selected"
+            self.notify("No item selected — select a row first", severity="warning")
             return
         if item.item_type != "paper":
-            self.status_text = "Preview only supported for Paper documents"
+            self.notify("Preview only supported for Paper documents", severity="warning")
             return
         self._start_spinner(f"Reading {item.name}...")
         self._read_document(item)
@@ -257,9 +269,12 @@ class SearchApp(App):
         except Exception as e:
             self.call_from_thread(self._stop_spinner)
             self.call_from_thread(setattr, self, "status_text", f"Error: {e}")
+            self.call_from_thread(self.notify, f"Error: {e}", severity="error")
 
 
 def run_search_tui(initial_query: str = "", db_path: Path | None = None) -> None:
     """Launch the interactive search TUI."""
     app = SearchApp(db_path=db_path, initial_query=initial_query)
     app.run()
+    # Force exit: worker threads may still be blocking on network I/O
+    os._exit(0)
