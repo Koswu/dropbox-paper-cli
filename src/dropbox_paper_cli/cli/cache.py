@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 
 import typer
 
@@ -37,7 +38,9 @@ def _get_formatter(ctx: typer.Context) -> OutputFormatter:
     return OutputFormatter(json_mode=json_mode, verbose=verbose)
 
 
-def _make_progress_callback(is_tty: bool) -> tuple[object, object]:
+def _make_progress_callback(
+    is_tty: bool,
+) -> tuple[Callable[[SyncResult], None], Callable[[], None]]:
     """Return (on_progress callback, finalizer).
 
     Progress is written to stderr only when connected to a TTY.
@@ -134,7 +137,7 @@ def search(
             from dropbox_paper_cli.services.cache_service import CacheService
 
             # Create a service with a dummy client for search-only
-            svc = CacheService(conn=db.conn, client=None)  # type: ignore[arg-type]
+            svc = CacheService(conn=db.conn, client=None)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             results = svc.search(query, item_type=item_type, limit=limit)
 
             if fmt.json_mode:
@@ -160,9 +163,7 @@ def search(
                 typer.echo(f'Found {len(results)} results for "{query}":')
                 typer.echo("")
                 for r in results:
-                    tag = {"paper": "📝", "folder": "📁", "file": "📄"}.get(
-                        r.item_type, "📄"
-                    )
+                    tag = {"paper": "📝", "folder": "📁", "file": "📄"}.get(r.item_type, "📄")
                     name = f"{r.name}/" if r.is_dir else r.name
                     typer.echo(f"{tag} [{r.item_type:<6s}] {name:<30s} {r.path_display}")
 

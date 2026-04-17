@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -88,10 +89,8 @@ def _migrate_legacy_dir() -> None:
                 shutil.move(str(src), str(DATA_DIR / f"cache.db{suffix}"))
 
     # Remove legacy dir if empty
-    try:
+    with contextlib.suppress(OSError):
         legacy.rmdir()
-    except OSError:
-        pass
 
 
 _migrate_legacy_dir()

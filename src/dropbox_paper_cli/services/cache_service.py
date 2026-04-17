@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from queue import Empty, Queue
 
 import dropbox
+import dropbox.exceptions
 import dropbox.files
 
 from dropbox_paper_cli.models.cache import CachedMetadata, SyncResult, SyncState
@@ -207,7 +208,9 @@ class CacheService:
 
         new_folders = [f for f in folders if f.id not in saved_folder_ids]
         deleted_folder_ids = saved_folder_ids - set(current_folder_ids.keys())
-        continuing = {fid: saved_cursors[fid] for fid in saved_folder_ids if fid in current_folder_ids}
+        continuing = {
+            fid: saved_cursors[fid] for fid in saved_folder_ids if fid in current_folder_ids
+        }
 
         # Process top-level entries
         existing_ids = self._get_existing_ids()
@@ -377,9 +380,11 @@ class CacheService:
 
     # ── Entry Conversion ─────────────────────────────────────────
 
-    def _entry_to_cached(self, entry: object) -> CachedMetadata | None:  # noqa: ANN001
+    def _entry_to_cached(self, entry: object) -> CachedMetadata | None:
         """Convert a Dropbox SDK entry to a CachedMetadata."""
         if isinstance(entry, dropbox.files.DeletedMetadata):
+            return None
+        if not isinstance(entry, (dropbox.files.FileMetadata, dropbox.files.FolderMetadata)):
             return None
 
         is_dir = isinstance(entry, dropbox.files.FolderMetadata)
@@ -391,18 +396,15 @@ class CacheService:
         else:
             item_type = "file"
 
-        path_lower = entry.path_lower
+        path_lower = entry.path_lower or ""
         parent_path = None
         if "/" in path_lower and path_lower != "/":
             parent_path = path_lower.rsplit("/", 1)[0] or "/"
 
         server_modified = None
-        if hasattr(entry, "server_modified") and entry.server_modified:
-            server_modified = (
-                entry.server_modified.isoformat()
-                if hasattr(entry.server_modified, "isoformat")
-                else str(entry.server_modified)
-            )
+        if isinstance(entry, dropbox.files.FileMetadata) and entry.server_modified:
+            sm = entry.server_modified
+            server_modified = sm.isoformat() if isinstance(sm, datetime) else str(sm)
 
         return CachedMetadata(
             id=entry.id,
@@ -412,10 +414,12 @@ class CacheService:
             is_dir=is_dir,
             item_type=item_type,
             parent_path=parent_path,
-            size_bytes=getattr(entry, "size", None) if not is_dir else None,
+            size_bytes=entry.size if isinstance(entry, dropbox.files.FileMetadata) else None,
             server_modified=server_modified if not is_dir else None,
-            rev=getattr(entry, "rev", None) if not is_dir else None,
-            content_hash=getattr(entry, "content_hash", None) if not is_dir else None,
+            rev=entry.rev if isinstance(entry, dropbox.files.FileMetadata) else None,
+            content_hash=entry.content_hash
+            if isinstance(entry, dropbox.files.FileMetadata)
+            else None,
         )
 
     def _upsert_metadata(self, cached: CachedMetadata) -> None:
@@ -493,7 +497,7 @@ class CacheService:
         rows = self._conn.execute(
             "SELECT key, cursor FROM sync_state WHERE key LIKE 'cursor:%'"
         ).fetchall()
-        return {row[0][len("cursor:"):]: row[1] for row in rows if row[1]}
+        return {row[0][len("cursor:") :]: row[1] for row in rows if row[1]}
 
     def _save_folder_cursor(self, folder_id: str, cursor: str) -> None:
         self._conn.execute(
@@ -576,9 +580,7 @@ class CacheService:
             return "AND m.item_type = 'folder'"
         return ""
 
-    def _fts_search(
-        self, query: str, item_type: str | None, limit: int
-    ) -> list[tuple]:
+    def _fts_search(self, query: str, item_type: str | None, limit: int) -> list[tuple]:
         type_clause = self._type_clause(item_type)
         sql = f"""
             SELECT {self._SELECT_COLS}
@@ -589,9 +591,7 @@ class CacheService:
         """
         return self._conn.execute(sql, (query, limit)).fetchall()
 
-    def _like_search(
-        self, query: str, item_type: str | None, limit: int
-    ) -> list[tuple]:
+    def _like_search(self, query: str, item_type: str | None, limit: int) -> list[tuple]:
         """Fallback substring search — works with CJK and any Unicode."""
         type_clause = self._type_clause(item_type)
         pattern = f"%{query}%"
