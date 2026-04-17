@@ -244,3 +244,37 @@ class TestCacheSearch:
             assert "No results" in result.stdout
 
         conn.close()
+
+
+class TestCacheIsearch:
+    """paper cache isearch tests."""
+
+    def test_isearch_rejects_json_mode(self, runner):
+        result = runner.invoke(app, ["--json", "cache", "isearch"])
+        assert result.exit_code == 1
+        assert "does not support --json" in result.output
+
+    def test_isearch_missing_textual(self, runner):
+        """When textual is not installed, isearch should exit with a helpful message."""
+        original_import = __import__
+
+        def blocking_import(name, *args, **kwargs):
+            if name == "dropbox_paper_cli.tui.search":
+                raise ImportError("No module named 'textual'")
+            return original_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=blocking_import):
+            result = runner.invoke(app, ["cache", "isearch"])
+            assert result.exit_code == 1
+
+    def test_isearch_launches_tui_with_query(self, runner):
+        with patch("dropbox_paper_cli.tui.search.run_search_tui") as mock_run:
+            result = runner.invoke(app, ["cache", "isearch", "hello"])
+            assert result.exit_code == 0
+            mock_run.assert_called_once_with(initial_query="hello")
+
+    def test_isearch_launches_tui_no_query(self, runner):
+        with patch("dropbox_paper_cli.tui.search.run_search_tui") as mock_run:
+            result = runner.invoke(app, ["cache", "isearch"])
+            assert result.exit_code == 0
+            mock_run.assert_called_once_with(initial_query="")
