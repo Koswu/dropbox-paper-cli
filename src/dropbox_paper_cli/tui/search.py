@@ -153,12 +153,12 @@ class SearchApp(App):
         return None
 
     def _get_dropbox_service(self):
-        """Create an authenticated DropboxService. Called from worker threads."""
+        """Create an authenticated DropboxService with a short timeout for TUI use."""
         from dropbox_paper_cli.services.auth_service import AuthService
         from dropbox_paper_cli.services.dropbox_service import DropboxService
 
         svc = AuthService()
-        client = svc.get_client()
+        client = svc.get_client(timeout=15)
         return DropboxService(client=client)
 
     def action_get_link(self) -> None:
