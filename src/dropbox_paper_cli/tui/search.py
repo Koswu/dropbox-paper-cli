@@ -80,6 +80,11 @@ class SearchApp(App):
         if self._initial_query:
             self._run_search(self._initial_query)
 
+    async def action_quit(self) -> None:
+        """Cancel all running workers before quitting."""
+        self.workers.cancel_all()
+        self.exit()
+
     def watch_status_text(self, value: str) -> None:
         try:
             bar = self.query_one("#status-bar", Static)
@@ -112,7 +117,7 @@ class SearchApp(App):
             return
         self._do_search(query)
 
-    @work(thread=True)
+    @work(thread=True, exclusive=True, group="search")
     def _do_search(self, query: str) -> None:
         """Run search in a background thread with its own DB connection."""
         try:
@@ -147,6 +152,15 @@ class SearchApp(App):
                 return r
         return None
 
+    def _get_dropbox_service(self):
+        """Create an authenticated DropboxService. Called from worker threads."""
+        from dropbox_paper_cli.services.auth_service import AuthService
+        from dropbox_paper_cli.services.dropbox_service import DropboxService
+
+        svc = AuthService()
+        client = svc.get_client()
+        return DropboxService(client=client)
+
     def action_get_link(self) -> None:
         item = self._get_selected()
         if item is None:
@@ -158,15 +172,10 @@ class SearchApp(App):
         self.status_text = f"Getting link for {item.name}..."
         self._fetch_link(item)
 
-    @work(thread=True)
+    @work(thread=True, exclusive=True, group="network")
     def _fetch_link(self, item: CachedMetadata) -> None:
         try:
-            from dropbox_paper_cli.services.auth_service import AuthService
-            from dropbox_paper_cli.services.dropbox_service import DropboxService
-
-            svc = AuthService()
-            client = svc.get_client()
-            dbx = DropboxService(client=client)
+            dbx = self._get_dropbox_service()
             result = dbx.get_or_create_sharing_link(item.id)
             url = result["url"]
             self.call_from_thread(setattr, self, "status_text", f"🔗 {url}")
@@ -184,15 +193,10 @@ class SearchApp(App):
         self.status_text = f"Opening {item.name} in browser..."
         self._open_in_browser(item)
 
-    @work(thread=True)
+    @work(thread=True, exclusive=True, group="network")
     def _open_in_browser(self, item: CachedMetadata) -> None:
         try:
-            from dropbox_paper_cli.services.auth_service import AuthService
-            from dropbox_paper_cli.services.dropbox_service import DropboxService
-
-            svc = AuthService()
-            client = svc.get_client()
-            dbx = DropboxService(client=client)
+            dbx = self._get_dropbox_service()
             result = dbx.get_or_create_sharing_link(item.id)
             url = result["url"]
             webbrowser.open(url)
@@ -211,17 +215,11 @@ class SearchApp(App):
         self.status_text = f"Reading {item.name}..."
         self._read_document(item)
 
-    @work(thread=True)
+    @work(thread=True, exclusive=True, group="network")
     def _read_document(self, item: CachedMetadata) -> None:
         try:
-            from dropbox_paper_cli.services.auth_service import AuthService
-            from dropbox_paper_cli.services.dropbox_service import DropboxService
-
-            svc = AuthService()
-            client = svc.get_client()
-            dbx = DropboxService(client=client)
+            dbx = self._get_dropbox_service()
             content = dbx.export_paper_content(item.id)
-            # Show first ~500 chars as a preview in status
             preview = content[:500].replace("\n", " ↵ ")
             if len(content) > 500:
                 preview += "…"
