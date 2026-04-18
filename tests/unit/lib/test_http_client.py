@@ -59,7 +59,7 @@ class TestTimeoutConstants:
 
     def test_metadata_timeout_values(self):
         assert METADATA_TIMEOUT.connect == 5.0
-        assert METADATA_TIMEOUT.read == 5.0
+        assert METADATA_TIMEOUT.read == 30.0
         assert METADATA_TIMEOUT.pool == 5.0
 
     def test_content_timeout_values(self):
