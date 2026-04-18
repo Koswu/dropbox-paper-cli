@@ -60,14 +60,18 @@ class DropboxService:
         Raises:
             NotFoundError: If the path does not exist.
         """
-        result = await self._client.rpc("files/get_metadata", {"path": path})
+        result = await self._get_metadata_raw(path)
         return DropboxItem.from_api(result)
 
     async def get_shared_folder_id(self, path: str) -> str | None:
         """Get the shared_folder_id for a folder, or None if not shared."""
-        result = await self._client.rpc("files/get_metadata", {"path": path})
+        result = await self._get_metadata_raw(path)
         sharing_info = result.get("sharing_info", {})
         return sharing_info.get("shared_folder_id")
+
+    async def _get_metadata_raw(self, path: str) -> dict:
+        """Fetch raw metadata dict from Dropbox API."""
+        return await self._client.rpc("files/get_metadata", {"path": path})
 
     async def get_or_create_sharing_link(self, path: str) -> dict[str, str]:
         """Get or create a sharing link for a file.
