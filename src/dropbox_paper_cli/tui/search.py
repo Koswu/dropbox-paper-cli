@@ -48,7 +48,6 @@ class SearchApp(App):
         Binding("escape", "quit", "Quit", priority=True),
         Binding("f2", "get_link", "Copy Link", priority=True),
         Binding("f3", "open_link", "Open", priority=True),
-        Binding("f4", "read_doc", "Preview", priority=True),
         Binding("down", "focus_table", "Focus Table", show=False),
     ]
 
@@ -293,37 +292,6 @@ class SearchApp(App):
             self.call_from_thread(self._stop_spinner)
             self.call_from_thread(setattr, self, "status_text", f"Error: {e}")
             self.call_from_thread(self.notify, f"Error: {e}", severity="error")
-
-    def action_read_doc(self) -> None:
-        item = self._get_selected()
-        if item is None:
-            self.notify("No item selected — select a row first", severity="warning")
-            return
-        if item.item_type != "paper":
-            self.notify("Preview only supported for Paper documents", severity="warning")
-            return
-        self._start_spinner(f"Reading {item.name}...")
-        self._read_document(item)
-
-    @work(thread=True, exclusive=True, group="network")
-    def _read_document(self, item: CachedMetadata) -> None:
-        try:
-
-            async def _export(client):
-                from dropbox_paper_cli.services.dropbox_service import DropboxService
-
-                dbx = DropboxService(client=client)
-                return await dbx.export_paper_content(item.id)
-
-            content = self._run_async(_export)
-            preview = content[:500].replace("\n", " ↵ ")
-            if len(content) > 500:
-                preview += "…"
-            self.call_from_thread(self._stop_spinner)
-            self.call_from_thread(setattr, self, "status_text", f"📄 {preview}")
-        except Exception as e:
-            self.call_from_thread(self._stop_spinner)
-            self.call_from_thread(setattr, self, "status_text", f"Error: {e}")
             self.call_from_thread(self.notify, f"Error: {e}", severity="error")
 
 
