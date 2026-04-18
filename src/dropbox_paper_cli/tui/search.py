@@ -209,12 +209,12 @@ class SearchApp(App):
         if item is None:
             self.notify("No item selected — select a row first", severity="warning")
             return
-        if item.is_dir:
-            self.notify("Sharing links not supported for folders", severity="warning")
-            return
         if item.url:
             self.status_text = f"🔗 {item.url}"
             self.notify(f"Link: {item.url}", severity="information")
+            return
+        if item.is_dir:
+            self.notify("No URL cached for this folder", severity="warning")
             return
         self._start_spinner(f"Getting link for {item.name}...")
         self._fetch_link(item)
@@ -250,12 +250,12 @@ class SearchApp(App):
         if item is None:
             self.notify("No item selected — select a row first", severity="warning")
             return
-        if item.is_dir:
-            self.notify("Cannot open folders in browser", severity="warning")
-            return
         if item.url:
             webbrowser.open(item.url)
             self.status_text = f"Opened {item.url}"
+            return
+        if item.is_dir:
+            self.notify("No URL cached for this folder", severity="warning")
             return
         self._start_spinner(f"Opening {item.name} in browser...")
         self._open_in_browser(item)
