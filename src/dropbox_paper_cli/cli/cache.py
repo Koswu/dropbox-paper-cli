@@ -72,12 +72,13 @@ def sync(
             typer.echo("Syncing metadata...")
 
         async def _run_sync():
-            return await svc.sync(
-                force_full=full,
-                path=path,
-                concurrency=concurrency,
-                on_progress=on_progress,
-            )
+            async with svc.client:
+                return await svc.sync(
+                    force_full=full,
+                    path=path,
+                    concurrency=concurrency,
+                    on_progress=on_progress,
+                )
 
         result = asyncio.run(_run_sync())
         finalize()

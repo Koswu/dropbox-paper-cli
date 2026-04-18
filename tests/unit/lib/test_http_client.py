@@ -29,11 +29,15 @@ from dropbox_paper_cli.models.auth import AuthToken
 
 def _make_token(**overrides: str | float | None) -> AuthToken:
     """Create a non-expired AuthToken for testing."""
+    ns_root = overrides.get("root_namespace_id")
+    ns_home = overrides.get("home_namespace_id")
     return AuthToken(
         access_token=str(overrides.get("access_token", "sl.test-access-token")),
         refresh_token=str(overrides.get("refresh_token", "test-refresh-token")),
         expires_at=float(overrides.get("expires_at", time.time() + 3600) or 0),
         account_id=str(overrides.get("account_id", "dbid:AAD_test")),
+        root_namespace_id=str(ns_root) if ns_root is not None else None,
+        home_namespace_id=str(ns_home) if ns_home is not None else None,
     )
 
 
