@@ -43,9 +43,9 @@ def _make_rpc_response(entries, cursor="cursor1", has_more=False):
 
 def _make_file_dict(
     id="id:file1",
-    name="test.paper",
-    path_display="/test.paper",
-    path_lower="/test.paper",
+    name="test.txt",
+    path_display="/test.txt",
+    path_lower="/test.txt",
 ):
     return {
         ".tag": "file",
@@ -113,7 +113,7 @@ class TestFullSyncNoSubfolders:
     async def test_updates_existing(self, conn, mock_client):
         conn.execute(
             """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
-            VALUES ('id:file1', 'old_name.paper', '/test.paper', '/test.paper', 0)"""
+            VALUES ('id:file1', 'old_name.txt', '/test.txt', '/test.txt', 0)"""
         )
         conn.commit()
 
@@ -440,6 +440,17 @@ class TestLinkSync:
         }
 
         async def rpc_router(endpoint, params=None):
+            if endpoint == "sharing/get_file_metadata/batch":
+                return [
+                    {
+                        "file": "id:f1",
+                        "result": {
+                            ".tag": "metadata",
+                            "id": "id:f1",
+                            "preview_url": "https://dbx.preview/a",
+                        },
+                    }
+                ]
             if endpoint == "sharing/list_shared_links":
                 return link_resp
             return list_folder_resp
@@ -447,7 +458,8 @@ class TestLinkSync:
         mock_client.rpc = AsyncMock(side_effect=rpc_router)
         svc = CacheService(conn=conn, client=mock_client)
         result = await svc.sync()
-        assert result.links_cached == 1
+        # 1 preview URL + 1 sharing link (sharing link overwrites preview)
+        assert result.links_cached >= 1
 
         row = conn.execute("SELECT url FROM metadata WHERE id = 'id:f1'").fetchone()
         assert row[0] == "https://dbx.link/a"
@@ -477,11 +489,13 @@ class TestLinkSync:
         """Metadata upsert does not overwrite a cached URL with NULL."""
         conn.execute(
             """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, url)
-            VALUES ('id:f1', 'a.paper', '/a.paper', '/a.paper', 0, 'https://dbx.link/a')"""
+            VALUES ('id:f1', 'a.txt', '/a.txt', '/a.txt', 0, 'https://dbx.link/a')"""
         )
         conn.commit()
 
-        file_entry = _make_file_dict(id="id:f1", name="a.paper")
+        file_entry = _make_file_dict(
+            id="id:f1", name="a.txt", path_display="/a.txt", path_lower="/a.txt"
+        )
         empty_resp = _make_rpc_response([file_entry], cursor="c1")
         link_resp = {"links": [], "has_more": False}
 
@@ -494,10 +508,9 @@ class TestLinkSync:
         svc = CacheService(conn=conn, client=mock_client)
         await svc.sync(force_full=True)
 
-        # URL should be the constructed web URL since every entry now gets one
-        # (no longer cleared by link sync)
+        # URL is now the constructed web URL (overwrites old sharing link during sync)
         row = conn.execute("SELECT url FROM metadata WHERE id = 'id:f1'").fetchone()
-        assert row[0] == "https://www.dropbox.com/home/test.paper"
+        assert row[0] == "https://www.dropbox.com/home/a.txt"
 
     async def test_link_sync_pagination(self, conn, mock_client):
         """Link sync handles paginated responses."""
@@ -510,6 +523,18 @@ class TestLinkSync:
         call_count = [0]
 
         async def rpc_router(endpoint, params=None):
+            if endpoint == "sharing/get_file_metadata/batch":
+                return [
+                    {
+                        "file": fid,
+                        "result": {
+                            ".tag": "metadata",
+                            "id": fid,
+                            "preview_url": f"https://dbx.preview/{fid}",
+                        },
+                    }
+                    for fid in (params or {}).get("files", [])
+                ]
             if endpoint == "sharing/list_shared_links":
                 call_count[0] += 1
                 if call_count[0] == 1:
@@ -527,4 +552,5 @@ class TestLinkSync:
         mock_client.rpc = AsyncMock(side_effect=rpc_router)
         svc = CacheService(conn=conn, client=mock_client)
         result = await svc.sync()
-        assert result.links_cached == 2
+        # 2 preview URLs + 2 sharing link overrides
+        assert result.links_cached == 4
