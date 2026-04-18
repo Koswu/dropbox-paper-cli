@@ -15,12 +15,77 @@ from dropbox_paper_cli.services.sync_orchestrator import (
 if TYPE_CHECKING:
     from dropbox_paper_cli.lib.http_client import DropboxHttpClient
 
+# ── Standalone search (no HTTP client needed) ─────────────────────
+
+_SELECT_COLS = """
+    m.id, m.name, m.path_display, m.path_lower, m.is_dir,
+    m.item_type, m.parent_path, m.size_bytes, m.server_modified, m.rev,
+    m.content_hash, m.synced_at
+"""
+
+
+def _type_clause(item_type: str | None) -> str:
+    if item_type == "paper":
+        return "AND m.item_type = 'paper'"
+    if item_type == "file":
+        return "AND m.item_type = 'file'"
+    if item_type == "folder":
+        return "AND m.item_type = 'folder'"
+    return ""
+
+
+def search_cache(
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    item_type: str | None = None,
+    limit: int = 50,
+) -> list[CachedMetadata]:
+    """Search file and folder names using FTS5, with LIKE fallback for CJK.
+
+    FTS5's unicode61 tokenizer does not segment CJK characters, so when
+    FTS returns no results the search transparently falls back to a
+    LIKE-based substring match on name and path.
+    """
+    fts_query = query.strip()
+    if not fts_query:
+        return []
+
+    tc = _type_clause(item_type)
+    # Try FTS5 first
+    rows = conn.execute(
+        f"""
+        SELECT {_SELECT_COLS}
+        FROM metadata m
+        JOIN metadata_fts ON m.rowid = metadata_fts.rowid
+        WHERE metadata_fts MATCH ? {tc}
+        LIMIT ?
+        """,
+        (fts_query, limit),
+    ).fetchall()
+    if not rows:
+        # Fallback: LIKE substring search (works for CJK)
+        pattern = f"%{fts_query}%"
+        rows = conn.execute(
+            f"""
+            SELECT {_SELECT_COLS}
+            FROM metadata m
+            WHERE (m.name LIKE ? OR m.path_display LIKE ?) {tc}
+            LIMIT ?
+            """,
+            (pattern, pattern, limit),
+        ).fetchall()
+    return [CachedMetadata.from_row(row) for row in rows]
+
+
+# ── Sync service (requires HTTP client) ──────────────────────────
+
 
 class CacheService:
-    """Manages local metadata cache sync and search operations.
+    """Manages local metadata cache sync operations.
 
     Delegates parallel sync to SyncOrchestrator.
-    SQLite FTS5 for keyword search with LIKE fallback for CJK.
+    For search, use the standalone ``search_cache()`` function.
     """
 
     def __init__(
@@ -35,8 +100,6 @@ class CacheService:
     def client(self) -> DropboxHttpClient:
         """Expose the HTTP client so callers can enter the async context."""
         return self._client
-
-    # ── Sync Operations ───────────────────────────────────────────
 
     async def sync(
         self,
@@ -57,77 +120,3 @@ class CacheService:
             concurrency=concurrency,
             on_progress=on_progress,
         )
-
-    # ── Search Operations ─────────────────────────────────────────
-
-    def search(
-        self,
-        query: str,
-        *,
-        item_type: str | None = None,
-        limit: int = 50,
-    ) -> list[CachedMetadata]:
-        """Search file and folder names using FTS5, with LIKE fallback for CJK.
-
-        FTS5's unicode61 tokenizer does not segment CJK characters, so when
-        FTS returns no results the search transparently falls back to a
-        LIKE-based substring match on name and path.
-
-        Args:
-            query: Search keyword(s).
-            item_type: Filter by 'file' or 'folder'. None for all.
-            limit: Maximum results.
-
-        Returns:
-            List of matching CachedMetadata entries.
-        """
-        fts_query = query.strip()
-        if not fts_query:
-            return []
-
-        rows = self._fts_search(fts_query, item_type, limit)
-        if not rows:
-            rows = self._like_search(fts_query, item_type, limit)
-        return [CachedMetadata.from_row(row) for row in rows]
-
-    # ------------------------------------------------------------------
-    # Internal search helpers
-    # ------------------------------------------------------------------
-
-    _SELECT_COLS = """
-        m.id, m.name, m.path_display, m.path_lower, m.is_dir,
-        m.item_type, m.parent_path, m.size_bytes, m.server_modified, m.rev,
-        m.content_hash, m.synced_at
-    """
-
-    def _type_clause(self, item_type: str | None) -> str:
-        if item_type == "paper":
-            return "AND m.item_type = 'paper'"
-        if item_type == "file":
-            return "AND m.item_type = 'file'"
-        if item_type == "folder":
-            return "AND m.item_type = 'folder'"
-        return ""
-
-    def _fts_search(self, query: str, item_type: str | None, limit: int) -> list[tuple]:
-        type_clause = self._type_clause(item_type)
-        sql = f"""
-            SELECT {self._SELECT_COLS}
-            FROM metadata m
-            JOIN metadata_fts ON m.rowid = metadata_fts.rowid
-            WHERE metadata_fts MATCH ? {type_clause}
-            LIMIT ?
-        """
-        return self._conn.execute(sql, (query, limit)).fetchall()
-
-    def _like_search(self, query: str, item_type: str | None, limit: int) -> list[tuple]:
-        """Fallback substring search — works with CJK and any Unicode."""
-        type_clause = self._type_clause(item_type)
-        pattern = f"%{query}%"
-        sql = f"""
-            SELECT {self._SELECT_COLS}
-            FROM metadata m
-            WHERE (m.name LIKE ? OR m.path_display LIKE ?) {type_clause}
-            LIMIT ?
-        """
-        return self._conn.execute(sql, (pattern, pattern, limit)).fetchall()

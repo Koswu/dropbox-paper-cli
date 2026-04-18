@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from dropbox_paper_cli.db.schema import initialize_schema
-from dropbox_paper_cli.services.cache_service import CacheService
+from dropbox_paper_cli.services.cache_service import CacheService, search_cache
 
 
 @pytest.fixture
@@ -347,11 +347,7 @@ class TestProgressCallback:
 class TestSearch:
     """FTS5 keyword search with type filter and limit."""
 
-    @pytest.fixture
-    def cache_service(self, conn, mock_client):
-        return CacheService(conn=conn, client=mock_client)
-
-    def test_search_by_name(self, cache_service, conn):
+    def test_search_by_name(self, conn):
         conn.execute(
             """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
             VALUES ('id:1', 'Meeting Notes.paper', '/Meeting Notes.paper', '/meeting notes.paper', 0)"""
@@ -362,11 +358,11 @@ class TestSearch:
         )
         conn.commit()
 
-        results = cache_service.search("Meeting")
+        results = search_cache(conn, "Meeting")
         assert len(results) == 1
         assert results[0].name == "Meeting Notes.paper"
 
-    def test_search_type_filter_file(self, cache_service, conn):
+    def test_search_type_filter_file(self, conn):
         conn.execute(
             """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, item_type)
             VALUES ('id:1', 'Meeting Notes.paper', '/Meeting Notes.paper', '/meeting notes.paper', 0, 'paper')"""
@@ -377,11 +373,11 @@ class TestSearch:
         )
         conn.commit()
 
-        results = cache_service.search("Meeting", item_type="paper")
+        results = search_cache(conn, "Meeting", item_type="paper")
         assert len(results) == 1
         assert results[0].item_type == "paper"
 
-    def test_search_type_filter_folder(self, cache_service, conn):
+    def test_search_type_filter_folder(self, conn):
         conn.execute(
             """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, item_type)
             VALUES ('id:1', 'Meeting Notes.paper', '/Meeting Notes.paper', '/meeting notes.paper', 0, 'paper')"""
@@ -392,11 +388,11 @@ class TestSearch:
         )
         conn.commit()
 
-        results = cache_service.search("Meeting", item_type="folder")
+        results = search_cache(conn, "Meeting", item_type="folder")
         assert len(results) == 1
         assert results[0].item_type == "folder"
 
-    def test_search_limit(self, cache_service, conn):
+    def test_search_limit(self, conn):
         for i in range(10):
             conn.execute(
                 """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
@@ -405,19 +401,19 @@ class TestSearch:
             )
         conn.commit()
 
-        results = cache_service.search("notes", limit=3)
+        results = search_cache(conn, "notes", limit=3)
         assert len(results) == 3
 
-    def test_search_empty_query(self, cache_service, conn):
-        results = cache_service.search("")
+    def test_search_empty_query(self, conn):
+        results = search_cache(conn, "")
         assert results == []
 
-    def test_search_no_results(self, cache_service, conn):
+    def test_search_no_results(self, conn):
         conn.execute(
             """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
             VALUES ('id:1', 'test.paper', '/test.paper', '/test.paper', 0)"""
         )
         conn.commit()
 
-        results = cache_service.search("nonexistent")
+        results = search_cache(conn, "nonexistent")
         assert results == []
