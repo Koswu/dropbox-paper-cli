@@ -69,10 +69,19 @@ class SyncOrchestrator:
         else:
             result = await self._full_sync_parallel(path, concurrency, progress)
             result.sync_type = "full"
-            # Fetch preview URLs for Paper docs, then sharing links
-            result.links_cached = await self._sync_preview_urls(concurrency)
+            # Fetch preview URLs for Paper docs
+            result.phase = "preview_urls"
+            result.phase_detail = ""
+            progress(result)
+            preview_count = await self._sync_preview_urls(concurrency)
+            result.links_cached = preview_count
+            # Fetch sharing links
+            result.phase = "shared_links"
+            result.phase_detail = ""
+            progress(result)
             result.links_cached += await self._sync_shared_links()
 
+        result.phase = "done"
         result.duration_seconds = round(time.monotonic() - start, 2)
         result.total = self._count_metadata()
         self._save_meta("sync_root", path)
