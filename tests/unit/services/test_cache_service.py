@@ -156,129 +156,206 @@ class TestFullSyncNoSubfolders:
 
 
 class TestFullSyncWithSubfolders:
-    """Full sync that discovers subfolders and uses parallel async workers."""
+    """Full sync that expands one level to discover sub-folders for parallelism."""
 
     async def test_adds_folder_and_children(self, conn, mock_client):
-        folder = _make_folder_dict()
+        top_folder = _make_folder_dict(
+            id="id:top1", name="Team", path_display="/Team", path_lower="/team"
+        )
         root_file = _make_file_dict()
+        subfolder = _make_folder_dict(
+            id="id:sub1",
+            name="Docs",
+            path_display="/Team/Docs",
+            path_lower="/team/docs",
+        )
         child_file = _make_file_dict(
             id="id:child1",
             name="child.paper",
-            path_display="/Project/child.paper",
-            path_lower="/project/child.paper",
+            path_display="/Team/Docs/child.paper",
+            path_lower="/team/docs/child.paper",
         )
 
         def rpc_router(endpoint, body):
             if endpoint == "files/list_folder" and not body.get("recursive"):
-                return _make_rpc_response([root_file, folder], cursor="top_cursor")
+                path = body.get("path", "")
+                if path == "":
+                    return _make_rpc_response([root_file, top_folder], cursor="root_c")
+                if path == "/team":
+                    return _make_rpc_response([subfolder], cursor="expand_c")
+                return _make_rpc_response([])
             if endpoint == "files/list_folder" and body.get("recursive"):
-                return _make_rpc_response([child_file], cursor="folder_cursor")
+                return _make_rpc_response([child_file], cursor="sub_cursor")
             return _make_rpc_response([])
 
         mock_client.rpc = AsyncMock(side_effect=rpc_router)
         svc = CacheService(conn=conn, client=mock_client)
         result = await svc.sync(concurrency=1)
 
-        # root_file + folder from top-level + child from worker
-        assert result.added == 3
-        assert result.total == 3
+        # root_file + top_folder (step 1) + subfolder (step 2) + child_file (step 3)
+        assert result.added == 4
+        assert result.total == 4
         assert result.sync_type == "full"
 
-    async def test_saves_per_folder_cursors(self, conn, mock_client):
-        folder = _make_folder_dict()
+    async def test_no_subfolders_skips_recursive(self, conn, mock_client):
+        """Top folder with only files — no recursive tasks needed."""
+        top_folder = _make_folder_dict(
+            id="id:top1", name="Team", path_display="/Team", path_lower="/team"
+        )
+        child_file = _make_file_dict(
+            id="id:child1",
+            name="child.paper",
+            path_display="/Team/child.paper",
+            path_lower="/team/child.paper",
+        )
 
         def rpc_router(endpoint, body):
             if endpoint == "files/list_folder" and not body.get("recursive"):
-                return _make_rpc_response([folder], cursor="top")
+                path = body.get("path", "")
+                if path == "":
+                    return _make_rpc_response([top_folder], cursor="root_c")
+                if path == "/team":
+                    return _make_rpc_response([child_file], cursor="expand_c")
+                return _make_rpc_response([])
             if endpoint == "files/list_folder" and body.get("recursive"):
-                return _make_rpc_response([], cursor="folder_cursor_saved")
+                raise AssertionError("Should not call recursive listing without sub-folders")
+            return _make_rpc_response([])
+
+        mock_client.rpc = AsyncMock(side_effect=rpc_router)
+        svc = CacheService(conn=conn, client=mock_client)
+        result = await svc.sync(concurrency=1)
+
+        assert result.added == 2  # top_folder + child_file from expansion
+        assert result.total == 2
+
+    async def test_saves_per_subfolder_cursors(self, conn, mock_client):
+        top_folder = _make_folder_dict(
+            id="id:top1", name="Team", path_display="/Team", path_lower="/team"
+        )
+        subfolder = _make_folder_dict(
+            id="id:sub1",
+            name="Docs",
+            path_display="/Team/Docs",
+            path_lower="/team/docs",
+        )
+
+        def rpc_router(endpoint, body):
+            if endpoint == "files/list_folder" and not body.get("recursive"):
+                path = body.get("path", "")
+                if path == "":
+                    return _make_rpc_response([top_folder], cursor="root_c")
+                if path == "/team":
+                    return _make_rpc_response([subfolder], cursor="expand_c")
+                return _make_rpc_response([])
+            if endpoint == "files/list_folder" and body.get("recursive"):
+                return _make_rpc_response([], cursor="sub_cursor_saved")
             return _make_rpc_response([])
 
         mock_client.rpc = AsyncMock(side_effect=rpc_router)
         svc = CacheService(conn=conn, client=mock_client)
         await svc.sync(concurrency=1)
 
-        row = conn.execute(
-            "SELECT cursor FROM sync_state WHERE key = 'cursor:id:folder1'"
-        ).fetchone()
+        # Cursor saved for sub-folder (not top-level folder)
+        row = conn.execute("SELECT cursor FROM sync_state WHERE key = 'cursor:id:sub1'").fetchone()
         assert row is not None
-        assert row[0] == "folder_cursor_saved"
+        assert row[0] == "sub_cursor_saved"
+
+        # cursor_format=v2 saved
+        fmt = conn.execute(
+            "SELECT cursor FROM sync_state WHERE key = 'meta:cursor_format'"
+        ).fetchone()
+        assert fmt is not None
+        assert fmt[0] == "v2"
 
 
 class TestIncrementalSync:
-    """Incremental sync uses saved per-folder cursors."""
+    """Incremental sync uses saved per-subfolder cursors (v2 format)."""
 
-    async def test_uses_folder_cursors(self, conn, mock_client):
+    def _setup_v2_state(self, conn):
+        """Insert v2 cursor format and sub-folder cursor with metadata."""
         conn.execute(
             """INSERT INTO sync_state (key, cursor, last_sync_at, total_items)
-            VALUES ('cursor:id:folder1', 'old_folder_cursor', '2025-01-01T00:00:00Z', 0)"""
+            VALUES ('meta:cursor_format', 'v2', '2025-01-01T00:00:00Z', 0)"""
+        )
+        conn.execute(
+            """INSERT INTO sync_state (key, cursor, last_sync_at, total_items)
+            VALUES ('cursor:id:sub1', 'old_sub_cursor', '2025-01-01T00:00:00Z', 0)"""
         )
         conn.execute(
             """INSERT INTO sync_state (key, cursor, last_sync_at, total_items)
             VALUES ('default', NULL, '2025-01-01T00:00:00Z', 0)"""
         )
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, parent_path)
+            VALUES ('id:top1', 'Team', '/Team', '/team', 1, '')"""
+        )
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, parent_path)
+            VALUES ('id:sub1', 'Docs', '/Team/Docs', '/team/docs', 1, '/team')"""
+        )
         conn.commit()
 
-        folder = _make_folder_dict()
-        new_file = _make_file_dict()
-        inc_file = _make_file_dict(
-            id="id:inc1",
-            name="inc.paper",
-            path_display="/Project/inc.paper",
-            path_lower="/project/inc.paper",
+    def _make_v2_router(self, extra_entries=None):
+        """Router that handles two-level expansion for incremental sync."""
+        top_folder = _make_folder_dict(
+            id="id:top1", name="Team", path_display="/Team", path_lower="/team"
         )
+        subfolder = _make_folder_dict(
+            id="id:sub1", name="Docs", path_display="/Team/Docs", path_lower="/team/docs"
+        )
+        continue_entries = extra_entries or []
 
         def rpc_router(endpoint, body):
             if endpoint == "files/list_folder":
-                return _make_rpc_response([new_file, folder], cursor="top_new")
+                path = body.get("path", "")
+                if path == "":
+                    return _make_rpc_response([top_folder], cursor="root_c")
+                if path == "/team":
+                    return _make_rpc_response([subfolder], cursor="expand_c")
+                return _make_rpc_response([])
             if endpoint == "files/list_folder/continue":
-                return _make_rpc_response([inc_file], cursor="new_folder_cursor")
+                return _make_rpc_response(continue_entries, cursor="new_sub_cursor")
             return _make_rpc_response([])
 
-        mock_client.rpc = AsyncMock(side_effect=rpc_router)
+        return rpc_router
+
+    async def test_uses_folder_cursors(self, conn, mock_client):
+        self._setup_v2_state(conn)
+        inc_file = _make_file_dict(
+            id="id:inc1",
+            name="inc.paper",
+            path_display="/Team/Docs/inc.paper",
+            path_lower="/team/docs/inc.paper",
+        )
+        mock_client.rpc = AsyncMock(side_effect=self._make_v2_router([inc_file]))
         svc = CacheService(conn=conn, client=mock_client)
         result = await svc.sync(concurrency=1)
 
         assert result.sync_type == "incremental"
         assert result.added >= 1
 
-        # Verify the continue call used the saved folder cursor
+        # Verify the continue call used the saved sub-folder cursor
         continue_calls = [
             c for c in mock_client.rpc.call_args_list if c.args[0] == "files/list_folder/continue"
         ]
         assert len(continue_calls) == 1
-        assert continue_calls[0].args[1]["cursor"] == "old_folder_cursor"
+        assert continue_calls[0].args[1]["cursor"] == "old_sub_cursor"
 
     async def test_incremental_handles_deletes(self, conn, mock_client):
-        conn.execute(
-            """INSERT INTO sync_state (key, cursor, last_sync_at, total_items)
-            VALUES ('cursor:id:folder1', 'cursor1', '2025-01-01T00:00:00Z', 1)"""
-        )
-        conn.execute(
-            """INSERT INTO sync_state (key, cursor, last_sync_at, total_items)
-            VALUES ('default', NULL, '2025-01-01T00:00:00Z', 0)"""
-        )
+        self._setup_v2_state(conn)
         conn.execute(
             """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
-            VALUES ('id:del', 'deleted.paper', '/project/deleted.paper', '/project/deleted.paper', 0)"""
+            VALUES ('id:del', 'deleted.paper', '/team/docs/deleted.paper',
+                    '/team/docs/deleted.paper', 0)"""
         )
         conn.commit()
 
-        folder = _make_folder_dict()
         deleted = _make_deleted_dict(
             name="deleted.paper",
-            path_display="/project/deleted.paper",
-            path_lower="/project/deleted.paper",
+            path_display="/team/docs/deleted.paper",
+            path_lower="/team/docs/deleted.paper",
         )
-
-        def rpc_router(endpoint, body):
-            if endpoint == "files/list_folder":
-                return _make_rpc_response([folder], cursor="top")
-            if endpoint == "files/list_folder/continue":
-                return _make_rpc_response([deleted], cursor="cursor2")
-            return _make_rpc_response([])
-
-        mock_client.rpc = AsyncMock(side_effect=rpc_router)
+        mock_client.rpc = AsyncMock(side_effect=self._make_v2_router([deleted]))
         svc = CacheService(conn=conn, client=mock_client)
         result = await svc.sync(concurrency=1)
         assert result.removed >= 1
@@ -298,19 +375,30 @@ class TestIncrementalSync:
         # list_folder + sharing/list_shared_links
         assert mock_client.rpc.call_count == 2
 
-    async def test_force_full_ignores_cursors(self, conn, mock_client):
+    async def test_v1_cursors_without_format_forces_full(self, conn, mock_client):
+        """Old per-folder cursors without cursor_format=v2 trigger full sync."""
         conn.execute(
             """INSERT INTO sync_state (key, cursor, last_sync_at, total_items)
             VALUES ('cursor:id:folder1', 'saved_cursor', '2025-01-01T00:00:00Z', 0)"""
         )
+        conn.execute(
+            """INSERT INTO sync_state (key, cursor, last_sync_at, total_items)
+            VALUES ('default', NULL, '2025-01-01T00:00:00Z', 0)"""
+        )
         conn.commit()
+
+        mock_client.rpc.return_value = _make_rpc_response([], cursor="new")
+        svc = CacheService(conn=conn, client=mock_client)
+        result = await svc.sync()
+        assert result.sync_type == "full"
+
+    async def test_force_full_ignores_cursors(self, conn, mock_client):
+        self._setup_v2_state(conn)
 
         mock_client.rpc.return_value = _make_rpc_response([], cursor="fresh")
         svc = CacheService(conn=conn, client=mock_client)
         result = await svc.sync(force_full=True)
         assert result.sync_type == "full"
-        # list_folder + sharing/list_shared_links
-        assert mock_client.rpc.call_count == 2
 
 
 class TestSyncRoot:
@@ -468,16 +556,46 @@ class TestLinkSync:
         """Incremental sync does not run link sync phase."""
         conn.execute(
             """INSERT INTO sync_state (key, cursor, last_sync_at, total_items)
-            VALUES ('cursor:id:folder1', 'saved_cursor', '2025-01-01T00:00:00Z', 0)"""
+            VALUES ('meta:cursor_format', 'v2', '2025-01-01T00:00:00Z', 0)"""
+        )
+        conn.execute(
+            """INSERT INTO sync_state (key, cursor, last_sync_at, total_items)
+            VALUES ('cursor:id:sub1', 'saved_cursor', '2025-01-01T00:00:00Z', 0)"""
+        )
+        conn.execute(
+            """INSERT INTO sync_state (key, cursor, last_sync_at, total_items)
+            VALUES ('default', NULL, '2025-01-01T00:00:00Z', 0)"""
+        )
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, parent_path)
+            VALUES ('id:top1', 'Team', '/Team', '/team', 1, '')"""
+        )
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, parent_path)
+            VALUES ('id:sub1', 'Docs', '/Team/Docs', '/team/docs', 1, '/team')"""
         )
         conn.commit()
 
-        list_folder_resp = _make_rpc_response([], cursor="new")
+        top_folder = _make_folder_dict(
+            id="id:top1", name="Team", path_display="/Team", path_lower="/team"
+        )
+        subfolder = _make_folder_dict(
+            id="id:sub1", name="Docs", path_display="/Team/Docs", path_lower="/team/docs"
+        )
 
         async def rpc_router(endpoint, params=None):
             if endpoint == "sharing/list_shared_links":
                 raise AssertionError("Should not call sharing API on incremental sync")
-            return list_folder_resp
+            if endpoint == "files/list_folder":
+                path = params.get("path", "") if params else ""
+                if path == "":
+                    return _make_rpc_response([top_folder], cursor="root_c")
+                if path == "/team":
+                    return _make_rpc_response([subfolder], cursor="expand_c")
+                return _make_rpc_response([])
+            if endpoint == "files/list_folder/continue":
+                return _make_rpc_response([], cursor="new_cursor")
+            return _make_rpc_response([])
 
         mock_client.rpc = AsyncMock(side_effect=rpc_router)
         svc = CacheService(conn=conn, client=mock_client)
