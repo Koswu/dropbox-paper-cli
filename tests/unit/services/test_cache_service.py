@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -25,6 +25,11 @@ def mock_client():
     """Mock DropboxHttpClient with async rpc method."""
     client = AsyncMock()
     client.rpc = AsyncMock()
+    # Default to personal account (same namespace IDs → /home/ URL prefix)
+    token = MagicMock()
+    token.root_namespace_id = "ns:123"
+    token.home_namespace_id = "ns:123"
+    client._token = token
     return client
 
 
@@ -488,10 +493,10 @@ class TestLinkSync:
         svc = CacheService(conn=conn, client=mock_client)
         await svc.sync(force_full=True)
 
-        # URL should be cleared since link sync clears stale URLs first
-        # and the link was not returned by sharing/list_shared_links
+        # URL should be the constructed web URL since every entry now gets one
+        # (no longer cleared by link sync)
         row = conn.execute("SELECT url FROM metadata WHERE id = 'id:f1'").fetchone()
-        assert row[0] is None
+        assert row[0] == "https://www.dropbox.com/home/test.paper"
 
     async def test_link_sync_pagination(self, conn, mock_client):
         """Link sync handles paginated responses."""

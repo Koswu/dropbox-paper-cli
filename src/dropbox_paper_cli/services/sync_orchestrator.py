@@ -33,9 +33,12 @@ class SyncOrchestrator:
         self,
         conn: sqlite3.Connection,
         client: DropboxHttpClient,
+        *,
+        url_base: str = "https://www.dropbox.com/home",
     ) -> None:
         self._conn = conn
         self._client = client
+        self._url_base = url_base
 
     # ── Public Entry Point ────────────────────────────────────────
 
@@ -316,10 +319,7 @@ class SyncOrchestrator:
     # ── Shared-Link Sync ─────────────────────────────────────────
 
     async def _sync_shared_links(self) -> int:
-        """Fetch all shared links and cache URLs by file ID. Returns count cached."""
-        # Clear stale URLs so revoked links don't linger
-        self._conn.execute("UPDATE metadata SET url = NULL WHERE url IS NOT NULL")
-
+        """Upgrade constructed URLs with actual sharing links where available."""
         count = 0
         cursor: str | None = None
         while True:
@@ -377,10 +377,13 @@ class SyncOrchestrator:
             elif isinstance(sm, datetime):
                 server_modified = sm.isoformat()
 
+        path_display = entry.get("path_display", "")
+        url = f"{self._url_base}{path_display}" if path_display else None
+
         return CachedMetadata(
             id=entry["id"],
             name=name,
-            path_display=entry.get("path_display", ""),
+            path_display=path_display,
             path_lower=path_lower,
             is_dir=is_dir,
             item_type=item_type,
@@ -389,6 +392,7 @@ class SyncOrchestrator:
             server_modified=server_modified,
             rev=entry.get("rev") if not is_dir else None,
             content_hash=entry.get("content_hash") if not is_dir else None,
+            url=url,
         )
 
     def _upsert_metadata(self, cached: CachedMetadata) -> None:

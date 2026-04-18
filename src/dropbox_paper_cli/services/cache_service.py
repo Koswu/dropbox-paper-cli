@@ -113,7 +113,16 @@ class CacheService:
 
         Delegates to SyncOrchestrator for parallel folder listing.
         """
-        orchestrator = SyncOrchestrator(self._conn, self._client)
+        # Detect team account for correct web URL prefix
+        token = self._client._token
+        is_team = (
+            token.root_namespace_id
+            and token.home_namespace_id
+            and token.root_namespace_id != token.home_namespace_id
+        )
+        url_base = "https://www.dropbox.com/work" if is_team else "https://www.dropbox.com/home"
+
+        orchestrator = SyncOrchestrator(self._conn, self._client, url_base=url_base)
         return await orchestrator.sync(
             force_full=force_full,
             path=path,
