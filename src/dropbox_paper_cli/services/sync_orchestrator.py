@@ -63,7 +63,8 @@ class SyncOrchestrator:
         if saved_root is not None and saved_root != path:
             force_full = True
 
-        if not force_full and self._has_folder_cursors():
+        cursor_fmt = self._load_meta("cursor_format")
+        if not force_full and self._has_folder_cursors() and cursor_fmt == "v2":
             result = await self._incremental_sync_parallel(path, concurrency, progress)
             result.sync_type = "incremental"
         else:
@@ -99,8 +100,8 @@ class SyncOrchestrator:
         existing_ids = self._get_existing_ids()
         seen_ids: set[str] = set()
 
+        # Step 1: List root non-recursively
         top_entries, folders = await self._list_top_level(path)
-
         for entry in top_entries:
             self._process_full_entry(entry, existing_ids, seen_ids, result)
         self._conn.commit()
@@ -109,11 +110,58 @@ class SyncOrchestrator:
         if not folders:
             self._remove_unseen(existing_ids, seen_ids, result)
             self._clear_folder_cursors()
+            self._save_meta("cursor_format", "v2")
             self._save_sync_state(None, self._now_str())
             self._conn.commit()
             on_progress(result)
             return result
 
+        # Step 2: Expand one level — discover sub-folders for parallelism
+        work_units: list[tuple[str, str]] = []
+        seen_work_ids: set[str] = set()
+        expansion_ok = True
+
+        async def _expand(folder: dict) -> tuple[list[dict], list[dict]] | Exception:
+            try:
+                return await self._list_top_level(folder.get("path_lower", ""))
+            except Exception as exc:
+                return exc
+
+        expand_results = await asyncio.gather(*[_expand(f) for f in folders])
+
+        for folder, expand_result in zip(folders, expand_results, strict=True):
+            if isinstance(expand_result, Exception):
+                print(
+                    f"[sync] Warning: expansion of {folder.get('path_lower', '')} "
+                    f"failed: {expand_result}",
+                    file=sys.stderr,
+                )
+                expansion_ok = False
+                work_units.append((folder["id"], folder.get("path_lower", "")))
+                continue
+            entries, sub_folders = expand_result
+            for entry in entries:
+                self._process_full_entry(entry, existing_ids, seen_ids, result)
+            for sf in sub_folders:
+                sf_id = sf["id"]
+                if sf_id not in seen_work_ids:
+                    seen_work_ids.add(sf_id)
+                    work_units.append((sf_id, sf.get("path_lower", "")))
+
+        self._conn.commit()
+        on_progress(result)
+
+        if not work_units:
+            self._remove_unseen(existing_ids, seen_ids, result)
+            self._clear_folder_cursors()
+            if expansion_ok:
+                self._save_meta("cursor_format", "v2")
+            self._save_sync_state(None, self._now_str())
+            self._conn.commit()
+            on_progress(result)
+            return result
+
+        # Step 3: Recursive listing of all work units in parallel
         limiter = AdaptiveLimiter(initial=concurrency, minimum=2, maximum=50)
         folder_cursors: dict[str, str] = {}
         worker_errors: list[tuple[str, Exception]] = []
@@ -156,7 +204,7 @@ class SyncOrchestrator:
                     async with lock:
                         worker_errors.append((folder_id, exc))
 
-        tasks = [list_folder_recursive(f["id"], f.get("path_lower", "")) for f in folders]
+        tasks = [list_folder_recursive(fid, fpath) for fid, fpath in work_units]
         await asyncio.gather(*tasks)
 
         self._remove_unseen(existing_ids, seen_ids, result)
@@ -167,6 +215,8 @@ class SyncOrchestrator:
             self._save_folder_cursor(fid, cursor)
         for fid, exc in worker_errors:
             print(f"[sync] Warning: folder {fid} failed: {exc}", file=sys.stderr)
+        if expansion_ok:
+            self._save_meta("cursor_format", "v2")
         self._save_sync_state(None, now)
         self._conn.commit()
         on_progress(result)
@@ -181,24 +231,102 @@ class SyncOrchestrator:
         on_progress: ProgressCallback,
     ) -> SyncResult:
         result = SyncResult()
-
         saved_cursors = self._load_folder_cursors()
 
-        top_entries, folders = await self._list_top_level(path)
-        current_folder_ids = {f["id"]: f for f in folders}
-        saved_folder_ids = set(saved_cursors.keys())
-
-        new_folders = [f for f in folders if f["id"] not in saved_folder_ids]
-        deleted_folder_ids = saved_folder_ids - set(current_folder_ids.keys())
-        continuing = {
-            fid: saved_cursors[fid] for fid in saved_folder_ids if fid in current_folder_ids
-        }
+        # Step 1: List root and expand one level to discover current structure
+        top_entries, top_folders = await self._list_top_level(path)
 
         existing_ids = self._get_existing_ids()
         seen_ids: set[str] = set()
         for entry in top_entries:
             self._process_incremental_entry(entry, existing_ids, seen_ids, result)
         self._conn.commit()
+
+        if not top_folders:
+            self._clear_folder_cursors()
+            self._save_sync_state(None, self._now_str())
+            self._conn.commit()
+            on_progress(result)
+            return result
+
+        # Step 2: Expand one level to discover current sub-folders
+        async def _expand(folder: dict) -> tuple[list[dict], list[dict]] | Exception:
+            try:
+                return await self._list_top_level(folder.get("path_lower", ""))
+            except Exception as exc:
+                return exc
+
+        expand_results = await asyncio.gather(*[_expand(f) for f in top_folders])
+
+        current_work_units: dict[str, dict] = {}
+        for folder, expand_result in zip(top_folders, expand_results, strict=True):
+            if isinstance(expand_result, Exception):
+                print(
+                    f"[sync] Warning: expansion of {folder.get('path_lower', '')} "
+                    f"failed: {expand_result}",
+                    file=sys.stderr,
+                )
+                # Preserve sub-folder cursors from DB to avoid false deletions
+                parent_path = folder.get("path_lower", "")
+                rows = self._conn.execute(
+                    "SELECT id, path_lower FROM metadata WHERE parent_path = ? AND is_dir = 1",
+                    (parent_path,),
+                ).fetchall()
+                for row in rows:
+                    fid, fpath = row
+                    if fid in saved_cursors:
+                        current_work_units[fid] = {"id": fid, "path_lower": fpath}
+                continue
+
+            entries, sub_folders = expand_result
+            parent_path = folder.get("path_lower", "")
+
+            # Process level-1 entries (only count genuinely new items)
+            level1_seen: set[str] = set()
+            for entry in entries:
+                cached = self._entry_to_cached(entry)
+                if cached is None:
+                    continue
+                level1_seen.add(cached.id)
+                seen_ids.add(cached.id)
+                if cached.id not in existing_ids:
+                    result.added += 1
+                self._upsert_metadata(cached)
+
+            # Detect level-1 deletions
+            db_children = {
+                row[0]
+                for row in self._conn.execute(
+                    "SELECT id FROM metadata WHERE parent_path = ?", (parent_path,)
+                ).fetchall()
+            }
+            stale = db_children - level1_seen
+            for sid in stale:
+                row = self._conn.execute(
+                    "SELECT path_lower, is_dir FROM metadata WHERE id = ?", (sid,)
+                ).fetchone()
+                if row:
+                    self._conn.execute("DELETE FROM metadata WHERE id = ?", (sid,))
+                    result.removed += 1
+                    if row[1]:  # is_dir — also remove sub-tree
+                        count = self._conn.execute(
+                            "DELETE FROM metadata WHERE path_lower LIKE ?",
+                            (row[0] + "/%",),
+                        ).rowcount
+                        result.removed += count
+
+            for sf in sub_folders:
+                current_work_units[sf["id"]] = sf
+
+        self._conn.commit()
+
+        # Step 3: Compare current work units with saved cursors
+        saved_ids = set(saved_cursors.keys())
+        current_ids = set(current_work_units.keys())
+
+        new_folders = [current_work_units[fid] for fid in current_ids - saved_ids]
+        deleted_folder_ids = saved_ids - current_ids
+        continuing = {fid: saved_cursors[fid] for fid in saved_ids & current_ids}
 
         for fid in deleted_folder_ids:
             self._remove_entries_by_cursor_folder(fid, result)
@@ -211,6 +339,7 @@ class SyncOrchestrator:
             on_progress(result)
             return result
 
+        # Step 4: Run continue/new-listing tasks in parallel
         limiter = AdaptiveLimiter(initial=concurrency, minimum=2, maximum=50)
         folder_cursors: dict[str, str] = {}
         worker_errors: list[tuple[str, Exception]] = []
@@ -237,8 +366,7 @@ class SyncOrchestrator:
                     await limiter.on_success()
                 except RateLimitError:
                     await limiter.on_rate_limit()
-                    # If cursor reset, do full listing for this folder
-                    folder = current_folder_ids.get(folder_id)
+                    folder = current_work_units.get(folder_id)
                     if folder:
                         await new_folder_listing(folder_id, folder.get("path_lower", ""))
                     else:
@@ -246,8 +374,7 @@ class SyncOrchestrator:
                             worker_errors.append((folder_id, RateLimitError("rate limited")))
                 except Exception as exc:
                     await limiter.on_error()
-                    # If cursor reset, do full listing for this folder
-                    folder = current_folder_ids.get(folder_id)
+                    folder = current_work_units.get(folder_id)
                     if folder and "reset" in str(exc).lower():
                         await new_folder_listing(folder_id, folder.get("path_lower", ""))
                     else:
