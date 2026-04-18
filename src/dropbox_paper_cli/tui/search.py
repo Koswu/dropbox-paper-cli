@@ -212,6 +212,7 @@ class SearchApp(App):
         if item.url:
             self.copy_to_clipboard(item.url)
             self.status_text = f"✅ Copied: {item.url}"
+            self.notify(f"✅ Copied: {item.url}", severity="information")
             return
         if item.is_dir:
             self.notify("No URL cached for this folder", severity="warning")
@@ -240,6 +241,7 @@ class SearchApp(App):
             self.call_from_thread(self._stop_spinner)
             self.call_from_thread(self.copy_to_clipboard, url)
             self.call_from_thread(setattr, self, "status_text", f"✅ Copied: {url}")
+            self.call_from_thread(self.notify, f"✅ Copied: {url}", severity="information")
         except Exception as e:
             self.call_from_thread(self._stop_spinner)
             self.call_from_thread(setattr, self, "status_text", f"Error: {e}")
