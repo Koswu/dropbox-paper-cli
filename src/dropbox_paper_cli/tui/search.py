@@ -46,9 +46,9 @@ class SearchApp(App):
 
     BINDINGS = [
         Binding("escape", "quit", "Quit", priority=True),
-        Binding("f2", "get_link", "Get Link", priority=True),
-        Binding("f3", "open_link", "Open in Browser", priority=True),
-        Binding("f4", "read_doc", "Read Doc", priority=True),
+        Binding("f2", "get_link", "Copy Link", priority=True),
+        Binding("f3", "open_link", "Open", priority=True),
+        Binding("f4", "read_doc", "Preview", priority=True),
         Binding("down", "focus_table", "Focus Table", show=False),
     ]
 
@@ -210,8 +210,8 @@ class SearchApp(App):
             self.notify("No item selected — select a row first", severity="warning")
             return
         if item.url:
-            self.status_text = f"🔗 {item.url}"
-            self.notify(f"Link: {item.url}", severity="information")
+            self.copy_to_clipboard(item.url)
+            self.status_text = f"✅ Copied: {item.url}"
             return
         if item.is_dir:
             self.notify("No URL cached for this folder", severity="warning")
@@ -238,8 +238,8 @@ class SearchApp(App):
             conn.commit()
             conn.close()
             self.call_from_thread(self._stop_spinner)
-            self.call_from_thread(setattr, self, "status_text", f"🔗 {url}")
-            self.call_from_thread(self.notify, f"Link: {url}", severity="information")
+            self.call_from_thread(self.copy_to_clipboard, url)
+            self.call_from_thread(setattr, self, "status_text", f"✅ Copied: {url}")
         except Exception as e:
             self.call_from_thread(self._stop_spinner)
             self.call_from_thread(setattr, self, "status_text", f"Error: {e}")
