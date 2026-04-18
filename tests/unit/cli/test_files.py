@@ -23,14 +23,11 @@ def runner():
 def mock_dropbox_service():
     """Patch the HTTP client and DropboxService used by async CLI commands.
 
-    The CLI commands now use this pattern:
-        client = _files._get_http_client()
-        async with client:
-            svc = DropboxService(client=client)
-            result = await svc.some_method(...)
-    We patch _get_http_client to return an async-context-manager mock,
-    and patch DropboxService in each CLI sub-module to return a shared mock
-    service whose methods are AsyncMock.
+    The CLI commands now use ``run_with_client(fn)`` from ``cli.common``,
+    which calls ``get_http_client()`` → ``async with client: await fn(client)``.
+    We patch ``common.get_http_client`` so all CLI modules share the same
+    async-context-manager mock, and patch DropboxService in each sub-module
+    to return a shared mock service whose methods are AsyncMock.
     """
     # Async-context-manager mock for the HTTP client
     mock_client = MagicMock()
@@ -52,7 +49,7 @@ def mock_dropbox_service():
     svc.delete_item = AsyncMock()
 
     with (
-        patch("dropbox_paper_cli.cli.files._get_http_client", return_value=mock_client),
+        patch("dropbox_paper_cli.cli.common.get_http_client", return_value=mock_client),
         patch("dropbox_paper_cli.cli.files_browse.DropboxService", return_value=svc),
         patch("dropbox_paper_cli.cli.files_content.DropboxService", return_value=svc),
         patch("dropbox_paper_cli.cli.files_organize.DropboxService", return_value=svc),

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import sys
 from enum import StrEnum
 from pathlib import Path
@@ -11,7 +10,7 @@ import typer
 
 from dropbox_paper_cli.cli import files as _files
 from dropbox_paper_cli.cli.common import get_formatter as _get_formatter
-from dropbox_paper_cli.cli.common import safe_command
+from dropbox_paper_cli.cli.common import run_with_client, safe_command
 from dropbox_paper_cli.services.dropbox_service import DropboxService
 
 
@@ -57,17 +56,15 @@ def read(
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
 
-        async def _run() -> None:
+        async def _run(client) -> None:
             fmt.verbose(f"Reading document {target!r}")
-            client = _files._get_http_client()
-            async with client:
-                svc = DropboxService(client=client)
-                resolved = await _files._resolve(target, svc)
-                fmt.verbose(f"Resolved to {resolved!r}")
+            svc = DropboxService(client=client)
+            resolved = await _files._resolve(target, svc)
+            fmt.verbose(f"Resolved to {resolved!r}")
 
-                item = await svc.get_metadata(resolved)
-                fmt.verbose(f"Exporting content for {item.name!r}")
-                content = await svc.export_paper_content(resolved)
+            item = await svc.get_metadata(resolved)
+            fmt.verbose(f"Exporting content for {item.name!r}")
+            content = await svc.export_paper_content(resolved)
 
             if fmt.json_mode:
                 fmt.success(
@@ -82,7 +79,7 @@ def read(
             else:
                 typer.echo(content, nl=False)
 
-        asyncio.run(_run())
+        run_with_client(_run)
 
 
 @_files.files_app.command()
@@ -103,16 +100,12 @@ def create(
     with safe_command(fmt):
         content = _read_content(file)
 
-        async def _run() -> None:
+        async def _run(client) -> None:
             fmt.verbose(
                 f"Creating document at {path!r} format={import_format.value} ({len(content)} bytes)"
             )
-            client = _files._get_http_client()
-            async with client:
-                svc = DropboxService(client=client)
-                result = await svc.create_paper_doc(
-                    path, content, import_format=import_format.value
-                )
+            svc = DropboxService(client=client)
+            result = await svc.create_paper_doc(path, content, import_format=import_format.value)
 
             if fmt.json_mode:
                 fmt.success(
@@ -130,7 +123,7 @@ def create(
                 typer.echo(f"  URL:  {result.url}")
                 typer.echo(f"  ID:   {result.file_id}")
 
-        asyncio.run(_run())
+        run_with_client(_run)
 
 
 @_files.files_app.command()
@@ -155,22 +148,20 @@ def write(
     with safe_command(fmt):
         content = _read_content(file)
 
-        async def _run() -> None:
+        async def _run(client) -> None:
             fmt.verbose(
                 f"Updating {target!r} format={import_format.value} policy={policy.value} ({len(content)} bytes)"
             )
-            client = _files._get_http_client()
-            async with client:
-                svc = DropboxService(client=client)
-                resolved = await _files._resolve(target, svc)
-                fmt.verbose(f"Resolved to {resolved!r}")
-                result = await svc.update_paper_doc(
-                    resolved,
-                    content,
-                    import_format=import_format.value,
-                    policy=policy.value,
-                    paper_revision=revision,
-                )
+            svc = DropboxService(client=client)
+            resolved = await _files._resolve(target, svc)
+            fmt.verbose(f"Resolved to {resolved!r}")
+            result = await svc.update_paper_doc(
+                resolved,
+                content,
+                import_format=import_format.value,
+                policy=policy.value,
+                paper_revision=revision,
+            )
 
             if fmt.json_mode:
                 fmt.success(
@@ -187,4 +178,4 @@ def write(
                 typer.echo(f"  Policy:   {policy.value}")
                 typer.echo(f"  Revision: {result.paper_revision}")
 
-        asyncio.run(_run())
+        run_with_client(_run)

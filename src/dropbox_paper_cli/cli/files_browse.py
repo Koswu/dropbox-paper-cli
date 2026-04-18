@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import typer
 
 from dropbox_paper_cli.cli import files as _files
 from dropbox_paper_cli.cli.common import get_formatter as _get_formatter
-from dropbox_paper_cli.cli.common import safe_command
+from dropbox_paper_cli.cli.common import run_with_client, safe_command
 from dropbox_paper_cli.services.dropbox_service import DropboxService
 
 
@@ -22,12 +20,10 @@ def list_cmd(
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
 
-        async def _run() -> None:
+        async def _run(client) -> None:
             fmt.verbose(f"Listing path={path!r} recursive={recursive}")
-            client = _files._get_http_client()
-            async with client:
-                svc = DropboxService(client=client)
-                items = await svc.list_folder(path, recursive=recursive)
+            svc = DropboxService(client=client)
+            items = await svc.list_folder(path, recursive=recursive)
             fmt.verbose(f"Got {len(items)} items")
 
             if fmt.json_mode:
@@ -65,7 +61,7 @@ def list_cmd(
                             size_str = f"  {item.size} B"
                     typer.echo(f"{icon} {name:<30s} {modified}{size_str}")
 
-        asyncio.run(_run())
+        run_with_client(_run)
 
 
 @_files.files_app.command()
@@ -77,14 +73,12 @@ def metadata(
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
 
-        async def _run() -> None:
+        async def _run(client) -> None:
             fmt.verbose(f"Getting metadata for {target!r}")
-            client = _files._get_http_client()
-            async with client:
-                svc = DropboxService(client=client)
-                resolved = await _files._resolve(target, svc)
-                fmt.verbose(f"Resolved to {resolved!r}")
-                item = await svc.get_metadata(resolved)
+            svc = DropboxService(client=client)
+            resolved = await _files._resolve(target, svc)
+            fmt.verbose(f"Resolved to {resolved!r}")
+            item = await svc.get_metadata(resolved)
 
             if fmt.json_mode:
                 fmt.success(
@@ -111,7 +105,7 @@ def metadata(
                 if item.rev:
                     typer.echo(f"Rev:      {item.rev}")
 
-        asyncio.run(_run())
+        run_with_client(_run)
 
 
 @_files.files_app.command()
@@ -123,18 +117,16 @@ def link(
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
 
-        async def _run() -> None:
+        async def _run(client) -> None:
             fmt.verbose(f"Getting sharing link for {target!r}")
-            client = _files._get_http_client()
-            async with client:
-                svc = DropboxService(client=client)
-                resolved = await _files._resolve(target, svc)
-                fmt.verbose(f"Resolved to {resolved!r}")
-                result = await svc.get_or_create_sharing_link(resolved)
+            svc = DropboxService(client=client)
+            resolved = await _files._resolve(target, svc)
+            fmt.verbose(f"Resolved to {resolved!r}")
+            result = await svc.get_or_create_sharing_link(resolved)
 
             if fmt.json_mode:
                 fmt.success(result)
             else:
                 typer.echo(result["url"])
 
-        asyncio.run(_run())
+        run_with_client(_run)

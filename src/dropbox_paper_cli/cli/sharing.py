@@ -2,23 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import typer
 
 from dropbox_paper_cli.cli.common import get_formatter as _get_formatter
-from dropbox_paper_cli.cli.common import get_http_client as _get_http_client
-from dropbox_paper_cli.cli.common import safe_command
+from dropbox_paper_cli.cli.common import run_with_client, safe_command
 from dropbox_paper_cli.lib.url_parser import is_dropbox_url, resolve_target
 from dropbox_paper_cli.services.dropbox_service import DropboxService
 from dropbox_paper_cli.services.sharing_service import SharingService
 
 sharing_app = typer.Typer(name="sharing", help="Sharing information.", no_args_is_help=True)
-
-
-def _get_services():
-    """Get HTTP client for test patching."""
-    return _get_http_client()
 
 
 @sharing_app.command()
@@ -30,26 +22,24 @@ def info(
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
 
-        async def _run() -> None:
+        async def _run(client) -> None:
             fmt.verbose(f"Getting sharing info for {target!r}")
-            client = _get_services()
-            async with client:
-                dbx_svc = DropboxService(client=client)
-                share_svc = SharingService(client=client)
+            dbx_svc = DropboxService(client=client)
+            share_svc = SharingService(client=client)
 
-                resolved = resolve_target(target)
-                if is_dropbox_url(resolved):
-                    fmt.verbose(f"Resolving shared link URL: {resolved!r}")
-                    resolved = await dbx_svc.resolve_shared_link_url(resolved)
-                fmt.verbose(f"Resolved to {resolved!r}")
+            resolved = resolve_target(target)
+            if is_dropbox_url(resolved):
+                fmt.verbose(f"Resolving shared link URL: {resolved!r}")
+                resolved = await dbx_svc.resolve_shared_link_url(resolved)
+            fmt.verbose(f"Resolved to {resolved!r}")
 
-                shared_folder_id = await dbx_svc.get_shared_folder_id(resolved)
-                if shared_folder_id is None:
-                    from dropbox_paper_cli.lib.errors import ValidationError
+            shared_folder_id = await dbx_svc.get_shared_folder_id(resolved)
+            if shared_folder_id is None:
+                from dropbox_paper_cli.lib.errors import ValidationError
 
-                    raise ValidationError(f"Target is not a shared folder: {resolved}")
+                raise ValidationError(f"Target is not a shared folder: {resolved}")
 
-                sharing_info = await share_svc.get_sharing_info(shared_folder_id)
+            sharing_info = await share_svc.get_sharing_info(shared_folder_id)
 
             if fmt.json_mode:
                 fmt.success(
@@ -76,4 +66,4 @@ def info(
                         f"  {m.display_name} ({m.email})  {' ' * max(0, 25 - len(m.display_name) - len(m.email))}{m.access_type}"
                     )
 
-        asyncio.run(_run())
+        run_with_client(_run)

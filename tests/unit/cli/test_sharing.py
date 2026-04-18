@@ -22,15 +22,11 @@ def runner():
 def mock_services():
     """Patch the HTTP client and services used by async sharing CLI commands.
 
-    The CLI commands now use this pattern:
-        client = _get_services()
-        async with client:
-            dbx_svc = DropboxService(client=client)
-            share_svc = SharingService(client=client)
-            result = await dbx_svc.some_method(...)
-    We patch _get_services to return an async-context-manager mock,
-    and patch DropboxService / SharingService constructors to return
-    shared mock services whose methods are AsyncMock.
+    The CLI commands now use ``run_with_client(fn)`` from ``cli.common``,
+    which calls ``get_http_client()`` → ``async with client: await fn(client)``.
+    We patch ``common.get_http_client`` so all modules share the same
+    async-context-manager mock, and patch DropboxService / SharingService
+    constructors to return shared mock services.
     """
     mock_client = MagicMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -44,7 +40,7 @@ def mock_services():
     share_svc.get_sharing_info = AsyncMock()
 
     with (
-        patch("dropbox_paper_cli.cli.sharing._get_services", return_value=mock_client),
+        patch("dropbox_paper_cli.cli.common.get_http_client", return_value=mock_client),
         patch("dropbox_paper_cli.cli.sharing.DropboxService", return_value=dbx_svc),
         patch("dropbox_paper_cli.cli.sharing.SharingService", return_value=share_svc),
     ):
