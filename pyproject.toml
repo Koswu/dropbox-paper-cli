@@ -1,7 +1,7 @@
 [project]
 name = "dropbox-paper-cli"
-version = "0.2.0"
-description = "CLI tool wrapping all Dropbox Paper SDK operations with local metadata caching and keyword search"
+version = "0.3.0"
+description = "CLI tool for Dropbox Paper: async file operations, Paper doc management, local metadata cache with FTS5 search, and interactive TUI"
 requires-python = ">=3.12"
 license = "MIT"
 readme = "README.md"
