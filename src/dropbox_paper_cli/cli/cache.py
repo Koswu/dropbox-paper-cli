@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from collections.abc import Callable
 
@@ -18,14 +19,10 @@ cache_app = typer.Typer(name="cache", help="Local metadata cache and search.", n
 
 
 def _get_cache_service(db: CacheDatabase) -> CacheService:
-    """Get a CacheService with an authenticated client. Patched in tests."""
+    """Get a CacheService with an authenticated HTTP client. Patched in tests."""
     svc = _get_auth_service()
-    client = svc.get_client()
-
-    def client_factory():
-        return svc.get_client()
-
-    return CacheService(conn=db.conn, client=client, client_factory=client_factory)
+    client = svc.get_http_client()
+    return CacheService(conn=db.conn, client=client)
 
 
 def _make_progress_callback(
@@ -74,12 +71,16 @@ def sync(
         if not fmt.json_mode:
             typer.echo("Syncing metadata...")
 
-        result = svc.sync(
-            force_full=full,
-            path=path,
-            concurrency=concurrency,
-            on_progress=on_progress,
-        )
+        async def _run_sync():
+            async with svc.client:
+                return await svc.sync(
+                    force_full=full,
+                    path=path,
+                    concurrency=concurrency,
+                    on_progress=on_progress,
+                )
+
+        result = asyncio.run(_run_sync())
         finalize()
         fmt.verbose(
             f"Sync done: type={result.sync_type} added={result.added} "
@@ -120,12 +121,9 @@ def search(
     fmt = _get_formatter(ctx)
     with safe_command(fmt), CacheDatabase() as db:
         fmt.verbose(f"Searching query={query!r} type={item_type} limit={limit}")
-        # Search doesn't need a Dropbox client — just use the DB directly
-        from dropbox_paper_cli.services.cache_service import CacheService
+        from dropbox_paper_cli.services.cache_service import search_cache
 
-        # Create a service with a dummy client for search-only
-        svc = CacheService(conn=db.conn, client=None)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-        results = svc.search(query, item_type=item_type, limit=limit)
+        results = search_cache(db.conn, query, item_type=item_type, limit=limit)
         fmt.verbose(f"Found {len(results)} results")
 
         if fmt.json_mode:

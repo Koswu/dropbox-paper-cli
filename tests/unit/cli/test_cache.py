@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -47,18 +47,22 @@ def mock_cache_db(tmp_path):
 
 @pytest.fixture
 def mock_cache_service():
-    """Patch both CacheDatabase and _get_cache_service for CLI tests."""
+    """Patch CacheDatabase and _get_cache_service for sync CLI tests.
+
+    The sync command calls ``asyncio.run()`` internally, so ``svc.sync``
+    must be an ``AsyncMock`` to support being awaited.
+    """
     with (
         patch("dropbox_paper_cli.cli.cache.CacheDatabase") as mock_db_cls,
         patch("dropbox_paper_cli.cli.cache._get_cache_service") as mock_get_svc,
     ):
-        # Set up a mock DB context manager
         mock_db = MagicMock()
         mock_db_cls.return_value = mock_db
         mock_db.__enter__ = MagicMock(return_value=mock_db)
         mock_db.__exit__ = MagicMock(return_value=False)
 
         svc = MagicMock()
+        svc.sync = AsyncMock()
         mock_get_svc.return_value = svc
         yield svc
 

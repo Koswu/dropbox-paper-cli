@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sqlite3
 import webbrowser
@@ -149,10 +150,9 @@ class SearchApp(App):
         try:
             conn = sqlite3.connect(str(self._db_path))
             conn.execute("PRAGMA journal_mode=WAL")
-            from dropbox_paper_cli.services.cache_service import CacheService
+            from dropbox_paper_cli.services.cache_service import search_cache
 
-            svc = CacheService(conn=conn, client=None)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-            results = svc.search(query, limit=100)
+            results = search_cache(conn, query, limit=100)
             conn.close()
             self._results = results
             self.call_from_thread(self._update_table, results)
@@ -186,14 +186,17 @@ class SearchApp(App):
                 return r
         return None
 
-    def _get_dropbox_service(self, *, timeout: int = 5):
-        """Create an authenticated DropboxService with a short timeout for TUI use."""
-        from dropbox_paper_cli.services.auth_service import AuthService
-        from dropbox_paper_cli.services.dropbox_service import DropboxService
+    def _run_async(self, fn):
+        """Create an HTTP client, enter its async context, and run *fn(client)*."""
+        from dropbox_paper_cli.cli.common import get_http_client
 
-        svc = AuthService()
-        client = svc.get_client(timeout=timeout)
-        return DropboxService(client=client)
+        client = get_http_client()
+
+        async def _wrapper():
+            async with client:
+                return await fn(client)
+
+        return asyncio.run(_wrapper())
 
     def action_get_link(self) -> None:
         item = self._get_selected()
@@ -209,8 +212,14 @@ class SearchApp(App):
     @work(thread=True, exclusive=True, group="network")
     def _fetch_link(self, item: CachedMetadata) -> None:
         try:
-            dbx = self._get_dropbox_service()
-            result = dbx.get_or_create_sharing_link(item.id)
+
+            async def _get_link(client):
+                from dropbox_paper_cli.services.dropbox_service import DropboxService
+
+                dbx = DropboxService(client=client)
+                return await dbx.get_or_create_sharing_link(item.id)
+
+            result = self._run_async(_get_link)
             url = result["url"]
             self.call_from_thread(self._stop_spinner)
             self.call_from_thread(setattr, self, "status_text", f"🔗 {url}")
@@ -234,8 +243,14 @@ class SearchApp(App):
     @work(thread=True, exclusive=True, group="network")
     def _open_in_browser(self, item: CachedMetadata) -> None:
         try:
-            dbx = self._get_dropbox_service()
-            result = dbx.get_or_create_sharing_link(item.id)
+
+            async def _get_link(client):
+                from dropbox_paper_cli.services.dropbox_service import DropboxService
+
+                dbx = DropboxService(client=client)
+                return await dbx.get_or_create_sharing_link(item.id)
+
+            result = self._run_async(_get_link)
             url = result["url"]
             webbrowser.open(url)
             self.call_from_thread(self._stop_spinner)
@@ -259,8 +274,14 @@ class SearchApp(App):
     @work(thread=True, exclusive=True, group="network")
     def _read_document(self, item: CachedMetadata) -> None:
         try:
-            dbx = self._get_dropbox_service(timeout=15)
-            content = dbx.export_paper_content(item.id)
+
+            async def _export(client):
+                from dropbox_paper_cli.services.dropbox_service import DropboxService
+
+                dbx = DropboxService(client=client)
+                return await dbx.export_paper_content(item.id)
+
+            content = self._run_async(_export)
             preview = content[:500].replace("\n", " ↵ ")
             if len(content) > 500:
                 preview += "…"

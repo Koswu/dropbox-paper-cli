@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+import os
+
 import typer
 
 from dropbox_paper_cli import __version__
@@ -31,6 +34,25 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+def _configure_logging(verbose: bool) -> None:
+    """Configure logging based on --verbose flag and PAPER_LOG_LEVEL env var.
+
+    Priority: --verbose flag sets DEBUG. Otherwise, PAPER_LOG_LEVEL env var is
+    used (e.g. DEBUG, INFO, WARNING). Default is WARNING (suppress most output).
+    """
+    level_name = os.environ.get("PAPER_LOG_LEVEL", "WARNING").upper()
+    if verbose:
+        level_name = "DEBUG"
+
+    level = getattr(logging, level_name, logging.WARNING)
+    logging.basicConfig(
+        level=level,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+    # Ensure our library loggers respect the level
+    logging.getLogger("dropbox_paper_cli").setLevel(level)
+
+
 @app.callback()
 def main(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON to stdout"),
@@ -40,3 +62,4 @@ def main(
     ),
 ) -> None:
     """Dropbox Paper CLI — manage Paper documents from the terminal."""
+    _configure_logging(verbose)

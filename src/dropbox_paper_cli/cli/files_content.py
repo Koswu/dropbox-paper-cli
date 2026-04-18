@@ -8,10 +8,10 @@ from pathlib import Path
 
 import typer
 
-# Runtime attribute lookup so test mocks on files._get_dropbox_service work.
 from dropbox_paper_cli.cli import files as _files
 from dropbox_paper_cli.cli.common import get_formatter as _get_formatter
-from dropbox_paper_cli.cli.common import safe_command
+from dropbox_paper_cli.cli.common import run_with_client, safe_command
+from dropbox_paper_cli.services.dropbox_service import DropboxService
 
 
 class ImportFormat(StrEnum):
@@ -55,28 +55,31 @@ def read(
     """Read and output Paper document content as Markdown."""
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
-        fmt.verbose(f"Reading document {target!r}")
-        svc = _files._get_dropbox_service()
-        resolved = _files._resolve(target, svc)
-        fmt.verbose(f"Resolved to {resolved!r}")
 
-        # Get metadata for name/path info
-        item = svc.get_metadata(resolved)
-        fmt.verbose(f"Exporting content for {item.name!r}")
-        content = svc.export_paper_content(resolved)
+        async def _run(client) -> None:
+            fmt.verbose(f"Reading document {target!r}")
+            svc = DropboxService(client=client)
+            resolved = await _files._resolve(target, svc)
+            fmt.verbose(f"Resolved to {resolved!r}")
 
-        if fmt.json_mode:
-            fmt.success(
-                {
-                    "id": item.id,
-                    "name": item.name,
-                    "path": item.path_display,
-                    "content": content,
-                    "format": "markdown",
-                }
-            )
-        else:
-            typer.echo(content, nl=False)
+            item = await svc.get_metadata(resolved)
+            fmt.verbose(f"Exporting content for {item.name!r}")
+            content = await svc.export_paper_content(resolved)
+
+            if fmt.json_mode:
+                fmt.success(
+                    {
+                        "id": item.id,
+                        "name": item.name,
+                        "path": item.path_display,
+                        "content": content,
+                        "format": "markdown",
+                    }
+                )
+            else:
+                typer.echo(content, nl=False)
+
+        run_with_client(_run)
 
 
 @_files.files_app.command()
@@ -96,27 +99,31 @@ def create(
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
         content = _read_content(file)
-        fmt.verbose(
-            f"Creating document at {path!r} format={import_format.value} ({len(content)} bytes)"
-        )
-        svc = _files._get_dropbox_service()
-        result = svc.create_paper_doc(path, content, import_format=import_format.value)
 
-        if fmt.json_mode:
-            fmt.success(
-                {
-                    "status": "created",
-                    "url": result.url,
-                    "path": result.result_path,
-                    "file_id": result.file_id,
-                    "paper_revision": result.paper_revision,
-                }
+        async def _run(client) -> None:
+            fmt.verbose(
+                f"Creating document at {path!r} format={import_format.value} ({len(content)} bytes)"
             )
-        else:
-            typer.echo("✓ Created Paper document")
-            typer.echo(f"  Path: {result.result_path}")
-            typer.echo(f"  URL:  {result.url}")
-            typer.echo(f"  ID:   {result.file_id}")
+            svc = DropboxService(client=client)
+            result = await svc.create_paper_doc(path, content, import_format=import_format.value)
+
+            if fmt.json_mode:
+                fmt.success(
+                    {
+                        "status": "created",
+                        "url": result.url,
+                        "path": result.result_path,
+                        "file_id": result.file_id,
+                        "paper_revision": result.paper_revision,
+                    }
+                )
+            else:
+                typer.echo("✓ Created Paper document")
+                typer.echo(f"  Path: {result.result_path}")
+                typer.echo(f"  URL:  {result.url}")
+                typer.echo(f"  ID:   {result.file_id}")
+
+        run_with_client(_run)
 
 
 @_files.files_app.command()
@@ -140,31 +147,35 @@ def write(
     fmt = _get_formatter(ctx)
     with safe_command(fmt):
         content = _read_content(file)
-        fmt.verbose(
-            f"Updating {target!r} format={import_format.value} policy={policy.value} ({len(content)} bytes)"
-        )
-        svc = _files._get_dropbox_service()
-        resolved = _files._resolve(target, svc)
-        fmt.verbose(f"Resolved to {resolved!r}")
-        result = svc.update_paper_doc(
-            resolved,
-            content,
-            import_format=import_format.value,
-            policy=policy.value,
-            paper_revision=revision,
-        )
 
-        if fmt.json_mode:
-            fmt.success(
-                {
-                    "status": "updated",
-                    "target": resolved,
-                    "policy": policy.value,
-                    "paper_revision": result.paper_revision,
-                }
+        async def _run(client) -> None:
+            fmt.verbose(
+                f"Updating {target!r} format={import_format.value} policy={policy.value} ({len(content)} bytes)"
             )
-        else:
-            typer.echo("✓ Updated Paper document")
-            typer.echo(f"  Target:   {resolved}")
-            typer.echo(f"  Policy:   {policy.value}")
-            typer.echo(f"  Revision: {result.paper_revision}")
+            svc = DropboxService(client=client)
+            resolved = await _files._resolve(target, svc)
+            fmt.verbose(f"Resolved to {resolved!r}")
+            result = await svc.update_paper_doc(
+                resolved,
+                content,
+                import_format=import_format.value,
+                policy=policy.value,
+                paper_revision=revision,
+            )
+
+            if fmt.json_mode:
+                fmt.success(
+                    {
+                        "status": "updated",
+                        "target": resolved,
+                        "policy": policy.value,
+                        "paper_revision": result.paper_revision,
+                    }
+                )
+            else:
+                typer.echo("✓ Updated Paper document")
+                typer.echo(f"  Target:   {resolved}")
+                typer.echo(f"  Policy:   {policy.value}")
+                typer.echo(f"  Revision: {result.paper_revision}")
+
+        run_with_client(_run)
