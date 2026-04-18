@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 _SELECT_COLS = """
     m.id, m.name, m.path_display, m.path_lower, m.is_dir,
     m.item_type, m.parent_path, m.size_bytes, m.server_modified, m.rev,
-    m.content_hash, m.synced_at
+    m.content_hash, m.url, m.synced_at
 """
 
 

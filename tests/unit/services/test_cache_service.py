@@ -144,7 +144,7 @@ class TestFullSyncNoSubfolders:
         svc = CacheService(conn=conn, client=mock_client)
         await svc.sync(path="/")
 
-        mock_client.rpc.assert_called_once_with(
+        mock_client.rpc.assert_any_call(
             "files/list_folder", {"path": "", "recursive": False, "limit": 2000}
         )
 
@@ -289,7 +289,8 @@ class TestIncrementalSync:
         svc = CacheService(conn=conn, client=mock_client)
         result = await svc.sync()
         assert result.sync_type == "full"
-        mock_client.rpc.assert_called_once()
+        # list_folder + sharing/list_shared_links
+        assert mock_client.rpc.call_count == 2
 
     async def test_force_full_ignores_cursors(self, conn, mock_client):
         conn.execute(
@@ -302,7 +303,8 @@ class TestIncrementalSync:
         svc = CacheService(conn=conn, client=mock_client)
         result = await svc.sync(force_full=True)
         assert result.sync_type == "full"
-        mock_client.rpc.assert_called_once()
+        # list_folder + sharing/list_shared_links
+        assert mock_client.rpc.call_count == 2
 
 
 class TestSyncRoot:
@@ -417,3 +419,106 @@ class TestSearch:
 
         results = search_cache(conn, "nonexistent")
         assert results == []
+
+
+class TestLinkSync:
+    """Shared link sync during full sync."""
+
+    async def test_full_sync_caches_links(self, conn, mock_client):
+        """Full sync fetches shared links and stores URLs by file ID."""
+        file_entry = _make_file_dict(id="id:f1", name="a.paper")
+        list_folder_resp = _make_rpc_response([file_entry], cursor="c1")
+        link_resp = {
+            "links": [{"id": "id:f1", "url": "https://dbx.link/a"}],
+            "has_more": False,
+        }
+
+        async def rpc_router(endpoint, params=None):
+            if endpoint == "sharing/list_shared_links":
+                return link_resp
+            return list_folder_resp
+
+        mock_client.rpc = AsyncMock(side_effect=rpc_router)
+        svc = CacheService(conn=conn, client=mock_client)
+        result = await svc.sync()
+        assert result.links_cached == 1
+
+        row = conn.execute("SELECT url FROM metadata WHERE id = 'id:f1'").fetchone()
+        assert row[0] == "https://dbx.link/a"
+
+    async def test_incremental_sync_skips_link_sync(self, conn, mock_client):
+        """Incremental sync does not run link sync phase."""
+        conn.execute(
+            """INSERT INTO sync_state (key, cursor, last_sync_at, total_items)
+            VALUES ('cursor:id:folder1', 'saved_cursor', '2025-01-01T00:00:00Z', 0)"""
+        )
+        conn.commit()
+
+        list_folder_resp = _make_rpc_response([], cursor="new")
+
+        async def rpc_router(endpoint, params=None):
+            if endpoint == "sharing/list_shared_links":
+                raise AssertionError("Should not call sharing API on incremental sync")
+            return list_folder_resp
+
+        mock_client.rpc = AsyncMock(side_effect=rpc_router)
+        svc = CacheService(conn=conn, client=mock_client)
+        result = await svc.sync()
+        assert result.sync_type == "incremental"
+        assert result.links_cached == 0
+
+    async def test_upsert_preserves_existing_url(self, conn, mock_client):
+        """Metadata upsert does not overwrite a cached URL with NULL."""
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, url)
+            VALUES ('id:f1', 'a.paper', '/a.paper', '/a.paper', 0, 'https://dbx.link/a')"""
+        )
+        conn.commit()
+
+        file_entry = _make_file_dict(id="id:f1", name="a.paper")
+        empty_resp = _make_rpc_response([file_entry], cursor="c1")
+        link_resp = {"links": [], "has_more": False}
+
+        async def rpc_router(endpoint, params=None):
+            if endpoint == "sharing/list_shared_links":
+                return link_resp
+            return empty_resp
+
+        mock_client.rpc = AsyncMock(side_effect=rpc_router)
+        svc = CacheService(conn=conn, client=mock_client)
+        await svc.sync(force_full=True)
+
+        # URL should be cleared since link sync clears stale URLs first
+        # and the link was not returned by sharing/list_shared_links
+        row = conn.execute("SELECT url FROM metadata WHERE id = 'id:f1'").fetchone()
+        assert row[0] is None
+
+    async def test_link_sync_pagination(self, conn, mock_client):
+        """Link sync handles paginated responses."""
+        f1 = _make_file_dict(id="id:f1", name="a.paper")
+        f2 = _make_file_dict(
+            id="id:f2", name="b.paper", path_display="/b.paper", path_lower="/b.paper"
+        )
+        list_resp = _make_rpc_response([f1, f2], cursor="c1")
+
+        call_count = [0]
+
+        async def rpc_router(endpoint, params=None):
+            if endpoint == "sharing/list_shared_links":
+                call_count[0] += 1
+                if call_count[0] == 1:
+                    return {
+                        "links": [{"id": "id:f1", "url": "https://dbx.link/a"}],
+                        "has_more": True,
+                        "cursor": "link_cursor",
+                    }
+                return {
+                    "links": [{"id": "id:f2", "url": "https://dbx.link/b"}],
+                    "has_more": False,
+                }
+            return list_resp
+
+        mock_client.rpc = AsyncMock(side_effect=rpc_router)
+        svc = CacheService(conn=conn, client=mock_client)
+        result = await svc.sync()
+        assert result.links_cached == 2

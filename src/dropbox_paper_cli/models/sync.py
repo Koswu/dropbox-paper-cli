@@ -25,3 +25,4 @@ class SyncResult:
     total: int = 0
     duration_seconds: float = 0.0
     sync_type: str = "full"
+    links_cached: int = 0
