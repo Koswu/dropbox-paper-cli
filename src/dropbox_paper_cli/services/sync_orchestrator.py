@@ -1,7 +1,8 @@
 """Sync orchestrator: async parallel full & incremental Dropbox metadata sync.
 
-Uses asyncio.gather() + Semaphore(concurrency) instead of ThreadPoolExecutor.
-All API calls go through a shared DropboxHttpClient (connection-pooled).
+Uses asyncio.gather() + AdaptiveLimiter for dynamic concurrency that discovers
+and respects Dropbox API rate limits.  All API calls go through a shared
+DropboxHttpClient (connection-pooled).
 """
 
 from __future__ import annotations
@@ -14,6 +15,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from dropbox_paper_cli.lib.adaptive_limiter import AdaptiveLimiter
+from dropbox_paper_cli.lib.errors import RateLimitError
 from dropbox_paper_cli.models.cache import CachedMetadata
 from dropbox_paper_cli.models.sync import SyncResult, SyncState
 
@@ -102,13 +105,13 @@ class SyncOrchestrator:
             on_progress(result)
             return result
 
-        semaphore = asyncio.Semaphore(concurrency)
+        limiter = AdaptiveLimiter(initial=concurrency, minimum=2, maximum=50)
         folder_cursors: dict[str, str] = {}
         worker_errors: list[tuple[str, Exception]] = []
         lock = asyncio.Lock()
 
         async def list_folder_recursive(folder_id: str, folder_path: str) -> None:
-            async with semaphore:
+            async with limiter:
                 try:
                     res = await self._client.rpc(
                         "files/list_folder",
@@ -134,7 +137,13 @@ class SyncOrchestrator:
                             self._conn.commit()
                             on_progress(result)
                         folder_cursors[folder_id] = res.get("cursor", "")
+                    await limiter.on_success()
+                except RateLimitError:
+                    await limiter.on_rate_limit()
+                    async with lock:
+                        worker_errors.append((folder_id, RateLimitError("rate limited")))
                 except Exception as exc:
+                    await limiter.on_error()
                     async with lock:
                         worker_errors.append((folder_id, exc))
 
@@ -193,13 +202,13 @@ class SyncOrchestrator:
             on_progress(result)
             return result
 
-        semaphore = asyncio.Semaphore(concurrency)
+        limiter = AdaptiveLimiter(initial=concurrency, minimum=2, maximum=50)
         folder_cursors: dict[str, str] = {}
         worker_errors: list[tuple[str, Exception]] = []
         lock = asyncio.Lock()
 
         async def continue_folder(folder_id: str, cursor: str) -> None:
-            async with semaphore:
+            async with limiter:
                 try:
                     res = await self._client.rpc(
                         "files/list_folder/continue",
@@ -216,7 +225,18 @@ class SyncOrchestrator:
                         for entry in entries:
                             self._process_incremental_entry(entry, existing_ids, seen_ids, result)
                         folder_cursors[folder_id] = res.get("cursor", "")
+                    await limiter.on_success()
+                except RateLimitError:
+                    await limiter.on_rate_limit()
+                    # If cursor reset, do full listing for this folder
+                    folder = current_folder_ids.get(folder_id)
+                    if folder:
+                        await new_folder_listing(folder_id, folder.get("path_lower", ""))
+                    else:
+                        async with lock:
+                            worker_errors.append((folder_id, RateLimitError("rate limited")))
                 except Exception as exc:
+                    await limiter.on_error()
                     # If cursor reset, do full listing for this folder
                     folder = current_folder_ids.get(folder_id)
                     if folder and "reset" in str(exc).lower():
@@ -226,7 +246,7 @@ class SyncOrchestrator:
                             worker_errors.append((folder_id, exc))
 
         async def new_folder_listing(folder_id: str, folder_path: str) -> None:
-            async with semaphore:
+            async with limiter:
                 try:
                     res = await self._client.rpc(
                         "files/list_folder",
@@ -248,7 +268,13 @@ class SyncOrchestrator:
                         for entry in entries:
                             self._process_incremental_entry(entry, existing_ids, seen_ids, result)
                         folder_cursors[folder_id] = res.get("cursor", "")
+                    await limiter.on_success()
+                except RateLimitError:
+                    await limiter.on_rate_limit()
+                    async with lock:
+                        worker_errors.append((folder_id, RateLimitError("rate limited")))
                 except Exception as exc:
+                    await limiter.on_error()
                     async with lock:
                         worker_errors.append((folder_id, exc))
 
@@ -371,15 +397,23 @@ class SyncOrchestrator:
         file_ids = [r[0] for r in rows]
         batch_size = 100
         count = 0
-        semaphore = asyncio.Semaphore(concurrency)
+        limiter = AdaptiveLimiter(initial=concurrency, minimum=2, maximum=20)
 
         async def fetch_batch(batch: list[str]) -> int:
-            async with semaphore:
+            async with limiter:
                 try:
                     res = await self._client.rpc(
                         "sharing/get_file_metadata/batch", {"files": batch}
                     )
+                except RateLimitError:
+                    await limiter.on_rate_limit()
+                    print(
+                        "[sync] Warning: preview URL batch rate-limited",
+                        file=sys.stderr,
+                    )
+                    return 0
                 except Exception as exc:
+                    await limiter.on_error()
                     print(
                         f"[sync] Warning: preview URL batch failed: {exc}",
                         file=sys.stderr,
@@ -400,6 +434,7 @@ class SyncOrchestrator:
                             (preview_url, file_id),
                         )
                         updated += 1
+                await limiter.on_success()
                 return updated
 
         batches = [file_ids[i : i + batch_size] for i in range(0, len(file_ids), batch_size)]

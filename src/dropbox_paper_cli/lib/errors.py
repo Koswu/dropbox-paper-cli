@@ -60,6 +60,16 @@ class NetworkError(AppError):
         super().__init__(message, code=code, exit_code=ExitCode.NETWORK_ERROR)
 
 
+class RateLimitError(NetworkError):
+    """HTTP 429 rate-limit error — carries optional Retry-After value."""
+
+    def __init__(
+        self, message: str, *, retry_after: float | None = None, code: str = "RATE_LIMITED"
+    ) -> None:
+        super().__init__(message, code=code)
+        self.retry_after = retry_after
+
+
 class PermissionError(AppError):
     """Insufficient permissions — exit code 6."""
 
