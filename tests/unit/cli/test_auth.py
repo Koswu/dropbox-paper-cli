@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -18,11 +18,40 @@ def runner():
 
 @pytest.fixture
 def mock_auth_service():
-    """Patch the auth service used by CLI commands."""
+    """Patch the auth service used by CLI commands.
+
+    Async methods (finish_flow, get_account_info) use AsyncMock so that
+    asyncio.run() in the CLI can await them correctly.
+    """
     with patch("dropbox_paper_cli.cli.auth._get_auth_service") as mock_get:
         svc = MagicMock()
+        svc.finish_flow = AsyncMock()
+        svc.get_account_info = AsyncMock()
         mock_get.return_value = svc
         yield svc
+
+
+def _make_token(account_id: str = "dbid:AADtest") -> MagicMock:
+    """Create a mock token with sensible defaults."""
+    token = MagicMock()
+    token.account_id = account_id
+    token.is_expired = False
+    token.expires_at = 9999999999.0
+    token.root_namespace_id = None
+    token.home_namespace_id = None
+    return token
+
+
+def _set_account_info(
+    svc: MagicMock,
+    display_name: str = "Jane Doe",
+    email: str = "jane@example.com",
+) -> None:
+    """Configure mock auth service to return account info dict."""
+    svc.get_account_info.return_value = {
+        "display_name": display_name,
+        "email": email,
+    }
 
 
 class TestAuthLogin:
@@ -31,17 +60,9 @@ class TestAuthLogin:
     def test_login_pkce_prompts_for_code(self, runner, mock_auth_service):
         mock_auth_service.start_pkce_flow.return_value = "https://dropbox.com/oauth2/authorize?..."
 
-        mock_token = MagicMock()
-        mock_token.account_id = "dbid:AADtest"
+        mock_token = _make_token()
         mock_auth_service.finish_flow.return_value = mock_token
-
-        # Mock getting user info
-        mock_client = MagicMock()
-        mock_account = MagicMock()
-        mock_account.name.display_name = "Jane Doe"
-        mock_account.email = "jane@example.com"
-        mock_client.users_get_current_account.return_value = mock_account
-        mock_auth_service.get_client.return_value = mock_client
+        _set_account_info(mock_auth_service)
 
         result = runner.invoke(app, ["auth", "login"], input="auth_code_here\n")
         assert result.exit_code == 0
@@ -50,17 +71,10 @@ class TestAuthLogin:
     def test_login_json_output(self, runner, mock_auth_service):
         mock_auth_service.start_pkce_flow.return_value = "https://dropbox.com/oauth2/authorize?..."
 
-        mock_token = MagicMock()
-        mock_token.account_id = "dbid:AADtest"
+        mock_token = _make_token()
         mock_auth_service.finish_flow.return_value = mock_token
         mock_auth_service.save_token.return_value = None
-
-        mock_client = MagicMock()
-        mock_account = MagicMock()
-        mock_account.name.display_name = "Jane Doe"
-        mock_account.email = "jane@example.com"
-        mock_client.users_get_current_account.return_value = mock_account
-        mock_auth_service.get_client.return_value = mock_client
+        _set_account_info(mock_auth_service)
 
         result = runner.invoke(app, ["--json", "auth", "login"], input="auth_code_here\n")
         assert result.exit_code == 0
@@ -76,16 +90,9 @@ class TestAuthLogin:
             "https://dropbox.com/oauth2/authorize?..."
         )
 
-        mock_token = MagicMock()
-        mock_token.account_id = "dbid:AADtest"
+        mock_token = _make_token()
         mock_auth_service.finish_flow.return_value = mock_token
-
-        mock_client = MagicMock()
-        mock_account = MagicMock()
-        mock_account.name.display_name = "Bob"
-        mock_account.email = "bob@example.com"
-        mock_client.users_get_current_account.return_value = mock_account
-        mock_auth_service.get_client.return_value = mock_client
+        _set_account_info(mock_auth_service, display_name="Bob", email="bob@example.com")
 
         result = runner.invoke(app, ["auth", "login", "--flow", "code"], input="code123\n")
         assert result.exit_code == 0
@@ -112,18 +119,9 @@ class TestAuthStatus:
     """paper auth status shows current authentication state."""
 
     def test_status_authenticated(self, runner, mock_auth_service):
-        mock_token = MagicMock()
-        mock_token.account_id = "dbid:AADtest"
-        mock_token.is_expired = False
-        mock_token.expires_at = 9999999999.0
+        mock_token = _make_token()
         mock_auth_service.load_token.return_value = mock_token
-
-        mock_client = MagicMock()
-        mock_account = MagicMock()
-        mock_account.name.display_name = "Jane Doe"
-        mock_account.email = "jane@example.com"
-        mock_client.users_get_current_account.return_value = mock_account
-        mock_auth_service.get_client.return_value = mock_client
+        _set_account_info(mock_auth_service)
 
         result = runner.invoke(app, ["auth", "status"])
         assert result.exit_code == 0
@@ -136,18 +134,9 @@ class TestAuthStatus:
         assert "Not authenticated" in result.stdout
 
     def test_status_json_authenticated(self, runner, mock_auth_service):
-        mock_token = MagicMock()
-        mock_token.account_id = "dbid:AADtest"
-        mock_token.is_expired = False
-        mock_token.expires_at = 9999999999.0
+        mock_token = _make_token()
         mock_auth_service.load_token.return_value = mock_token
-
-        mock_client = MagicMock()
-        mock_account = MagicMock()
-        mock_account.name.display_name = "Jane Doe"
-        mock_account.email = "jane@example.com"
-        mock_client.users_get_current_account.return_value = mock_account
-        mock_auth_service.get_client.return_value = mock_client
+        _set_account_info(mock_auth_service)
 
         result = runner.invoke(app, ["--json", "auth", "status"])
         assert result.exit_code == 0

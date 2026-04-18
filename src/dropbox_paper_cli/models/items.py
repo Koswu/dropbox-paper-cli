@@ -1,4 +1,4 @@
-"""DropboxItem and PaperDocument dataclasses with SDK metadata mapping."""
+"""DropboxItem and PaperDocument dataclasses with API response mapping."""
 
 from __future__ import annotations
 
@@ -27,56 +27,40 @@ class DropboxItem:
         return self.name.endswith(".paper")
 
     @classmethod
-    def from_sdk(cls, metadata: Any) -> DropboxItem:
-        """Create a DropboxItem from a Dropbox SDK metadata object.
+    def from_api(cls, data: dict[str, Any]) -> DropboxItem:
+        """Create a DropboxItem from a Dropbox API JSON response dict.
 
-        Handles both FileMetadata and FolderMetadata.
+        Handles both file and folder entries by inspecting the ``.tag`` field.
         """
-        import dropbox.files
-
-        if isinstance(metadata, dropbox.files.FileMetadata):
+        tag = data.get(".tag", "file")
+        if tag == "folder":
             return cls(
-                id=metadata.id,
-                name=metadata.name,
-                path_display=metadata.path_display,
-                path_lower=metadata.path_lower,
-                type="file",
-                size=metadata.size,
-                server_modified=metadata.server_modified,
-                rev=metadata.rev,
-                content_hash=metadata.content_hash,
-            )
-        elif isinstance(metadata, dropbox.files.FolderMetadata):
-            return cls(
-                id=metadata.id,
-                name=metadata.name,
-                path_display=metadata.path_display,
-                path_lower=metadata.path_lower,
+                id=data["id"],
+                name=data["name"],
+                path_display=data.get("path_display", ""),
+                path_lower=data.get("path_lower", ""),
                 type="folder",
             )
         else:
-            # Fallback: try to infer from class name (for mocks)
-            class_name = metadata.__class__.__name__
-            if class_name == "FolderMetadata":
-                return cls(
-                    id=metadata.id,
-                    name=metadata.name,
-                    path_display=metadata.path_display,
-                    path_lower=metadata.path_lower,
-                    type="folder",
-                )
-            else:
-                return cls(
-                    id=metadata.id,
-                    name=metadata.name,
-                    path_display=metadata.path_display,
-                    path_lower=metadata.path_lower,
-                    type="file",
-                    size=getattr(metadata, "size", None),
-                    server_modified=getattr(metadata, "server_modified", None),
-                    rev=getattr(metadata, "rev", None),
-                    content_hash=getattr(metadata, "content_hash", None),
-                )
+            server_modified = None
+            if "server_modified" in data:
+                # Dropbox returns ISO 8601: "2025-07-18T12:00:00Z"
+                raw = data["server_modified"]
+                if isinstance(raw, str):
+                    server_modified = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                else:
+                    server_modified = raw
+            return cls(
+                id=data["id"],
+                name=data["name"],
+                path_display=data.get("path_display", ""),
+                path_lower=data.get("path_lower", ""),
+                type="file",
+                size=data.get("size"),
+                server_modified=server_modified,
+                rev=data.get("rev"),
+                content_hash=data.get("content_hash"),
+            )
 
 
 @dataclass
@@ -95,9 +79,24 @@ class PaperCreateResult:
     file_id: str
     paper_revision: int
 
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> PaperCreateResult:
+        """Create from API JSON response."""
+        return cls(
+            url=data["url"],
+            result_path=data["result_path"],
+            file_id=data["file_id"],
+            paper_revision=data["paper_revision"],
+        )
+
 
 @dataclass
 class PaperUpdateResult:
     """Result of updating an existing Paper document via the v2 API."""
 
     paper_revision: int
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> PaperUpdateResult:
+        """Create from API JSON response."""
+        return cls(paper_revision=data["paper_revision"])

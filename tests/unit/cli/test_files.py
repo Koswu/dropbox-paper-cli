@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -21,10 +21,39 @@ def runner():
 
 @pytest.fixture
 def mock_dropbox_service():
-    """Patch the dropbox service factory used by CLI commands."""
-    with patch("dropbox_paper_cli.cli.files._get_dropbox_service") as mock_get:
-        svc = MagicMock()
-        mock_get.return_value = svc
+    """Patch the HTTP client and DropboxService used by async CLI commands.
+
+    The CLI commands now use ``run_with_client(fn)`` from ``cli.common``,
+    which calls ``get_http_client()`` → ``async with client: await fn(client)``.
+    We patch ``common.get_http_client`` so all CLI modules share the same
+    async-context-manager mock, and patch DropboxService in each sub-module
+    to return a shared mock service whose methods are AsyncMock.
+    """
+    # Async-context-manager mock for the HTTP client
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    # Shared mock service with AsyncMock methods
+    svc = MagicMock()
+    svc.list_folder = AsyncMock(return_value=[])
+    svc.get_metadata = AsyncMock()
+    svc.get_or_create_sharing_link = AsyncMock()
+    svc.resolve_shared_link_url = AsyncMock()
+    svc.export_paper_content = AsyncMock()
+    svc.create_paper_doc = AsyncMock()
+    svc.update_paper_doc = AsyncMock()
+    svc.create_folder = AsyncMock()
+    svc.move_item = AsyncMock()
+    svc.copy_item = AsyncMock()
+    svc.delete_item = AsyncMock()
+
+    with (
+        patch("dropbox_paper_cli.cli.common.get_http_client", return_value=mock_client),
+        patch("dropbox_paper_cli.cli.files_browse.DropboxService", return_value=svc),
+        patch("dropbox_paper_cli.cli.files_content.DropboxService", return_value=svc),
+        patch("dropbox_paper_cli.cli.files_organize.DropboxService", return_value=svc),
+    ):
         yield svc
 
 

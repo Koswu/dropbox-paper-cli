@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 import typer
@@ -37,27 +38,26 @@ def login(
         # Prompt for auth code
         auth_code = typer.prompt("Paste the authorization code")
 
-        # Complete the flow
-        token = svc.finish_flow(auth_code)
+        # Complete the flow (async)
+        token = asyncio.run(svc.finish_flow(auth_code))
         svc.save_token(token)
 
-        # Get user info
-        client = svc.get_client()
-        account = client.users_get_current_account()
+        # Get user info via API
+        account = asyncio.run(svc.get_account_info())
 
         if fmt.json_mode:
             fmt.success(
                 {
                     "status": "authenticated",
                     "account_id": token.account_id,
-                    "display_name": account.name.display_name,
-                    "email": account.email,
+                    "display_name": account["display_name"],
+                    "email": account["email"],
                     "token_path": str(TOKEN_PATH),
                 }
             )
         else:
             typer.echo("")
-            typer.echo(f"✓ Authenticated as {account.name.display_name} ({account.email})")
+            typer.echo(f"✓ Authenticated as {account['display_name']} ({account['email']})")
             typer.echo(f"  Account ID: {token.account_id}")
             typer.echo(f"  Token stored at: {TOKEN_PATH}")
 
@@ -111,11 +111,10 @@ def status(ctx: typer.Context) -> None:
 
     try:
         fmt.verbose("Verifying token with Dropbox API...")
-        client = svc.get_client()
-        account = client.users_get_current_account()
+        account = asyncio.run(svc.get_account_info())
         fmt.verbose("API verification successful")
 
-        # Reload token — get_client() may have persisted a refreshed access token
+        # Reload token — the HTTP client may have refreshed it
         token = svc.load_token() or token
         expires_str = datetime.fromtimestamp(token.expires_at, tz=UTC).isoformat()
 
@@ -124,19 +123,18 @@ def status(ctx: typer.Context) -> None:
                 {
                     "authenticated": True,
                     "account_id": token.account_id,
-                    "display_name": account.name.display_name,
-                    "email": account.email,
+                    "display_name": account["display_name"],
+                    "email": account["email"],
                     "expires_at": expires_str,
                 }
             )
         else:
-            typer.echo(f"Authenticated as {account.name.display_name} ({account.email})")
+            typer.echo(f"Authenticated as {account['display_name']} ({account['email']})")
             typer.echo(f"Account ID: {token.account_id}")
             typer.echo(f"Token expires: {expires_str}")
 
     except Exception as exc:
         fmt.verbose(f"API verification failed: {exc}")
-        # Token exists but can't connect — show what we have
         if fmt.json_mode:
             fmt.success(
                 {
