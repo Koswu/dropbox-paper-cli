@@ -4,19 +4,22 @@
 [![Python](https://img.shields.io/pypi/pyversions/dropbox-paper-cli)](https://pypi.org/project/dropbox-paper-cli/)
 [![License: MIT](https://img.shields.io/pypi/l/dropbox-paper-cli)](https://github.com/Koswu/dropbox-paper-cli/blob/main/LICENSE)
 
-A Python CLI tool for managing Dropbox Paper documents from the terminal — browse files, create and edit Paper docs, read as Markdown, and search across your entire workspace with a local metadata cache.
+A Python CLI tool for managing Dropbox Paper documents from the terminal — browse files, create and edit Paper docs, read as Markdown, search across your entire workspace with a local metadata cache, and interactively explore results in a TUI. Built on httpx for fully async HTTP communication.
 
 ## Features
 
 - **OAuth2 Authentication** — PKCE flow with automatic token refresh
+- **Async HTTP** — built on httpx with concurrent API requests and token auto-refresh
 - **File Operations** — list, create, read, write, move, copy, delete, create folders, get sharing links
 - **Paper Doc Creation** — create new Paper documents from Markdown, HTML, or plain text
 - **Paper Doc Updates** — overwrite, append, prepend, or revision-safe update existing Paper documents
 - **Paper Doc Export** — read Paper documents as Markdown directly in your terminal
 - **Local Cache & Search** — sync your full Dropbox directory tree to a local SQLite database for instant keyword search (FTS5 + CJK fallback)
-- **Parallel Sync** — 20-concurrent-worker pipeline for large workspaces
+- **Interactive TUI Search** — Textual-powered interactive search with keyboard shortcuts to get links, open in browser, or preview documents
+- **Parallel Sync** — 20-concurrent-worker pipeline for large workspaces (configurable)
 - **Team Account Support** — automatic namespace detection for Dropbox Business accounts
 - **JSON Output** — `--json` flag on all commands for scripting
+- **Verbose Logging** — `--verbose` flag for diagnostic output on all commands
 
 ## Installation
 
@@ -178,7 +181,20 @@ paper cache search QUERY --type paper   # Filter: paper docs only
 paper cache search QUERY --type folder  # Filter: folders only
 paper cache search QUERY --type file    # Filter: regular files only
 paper cache search QUERY --limit 20     # Limit results
+
+paper cache isearch                  # Interactive TUI search
+paper cache isearch "initial query"  # Open TUI with pre-filled query
 ```
+
+**Interactive Search (TUI) Key Bindings:**
+
+| Key | Action |
+|-----|--------|
+| Enter | Move focus to results table |
+| F2 | Get sharing link for selected item |
+| F3 | Open selected item in browser |
+| F4 | Preview Paper document content |
+| Escape | Quit |
 
 ### Sharing
 
@@ -193,6 +209,14 @@ paper --json ...      # JSON output for scripting
 paper --verbose ...   # Diagnostic output to stderr
 paper --version       # Show version
 ```
+
+## Architecture
+
+- **HTTP Layer**: httpx-based async client (`lib/http_client.py`) with automatic token refresh, retry logic, and Dropbox API v2 RPC/content endpoints
+- **Services**: `DropboxService` (file/folder ops), `SharingService`, `CacheService` (sync), standalone `search_cache()` for FTS5 queries
+- **CLI**: Typer-based commands with `run_with_client()` helper for consistent async execution
+- **TUI**: Textual-powered interactive search app with background workers for network operations
+- **Cache**: SQLite with FTS5 full-text search, LIKE fallback for CJK, WAL mode for concurrent reads
 
 ## Data Storage
 
