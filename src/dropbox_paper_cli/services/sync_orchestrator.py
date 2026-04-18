@@ -66,8 +66,9 @@ class SyncOrchestrator:
         else:
             result = await self._full_sync_parallel(path, concurrency, progress)
             result.sync_type = "full"
-            # Fetch and cache sharing links on full sync
-            result.links_cached = await self._sync_shared_links()
+            # Fetch preview URLs for Paper docs, then sharing links
+            result.links_cached = await self._sync_preview_urls(concurrency)
+            result.links_cached += await self._sync_shared_links()
 
         result.duration_seconds = round(time.monotonic() - start, 2)
         result.total = self._count_metadata()
@@ -358,6 +359,53 @@ class SyncOrchestrator:
                 cursor = res["cursor"]
             else:
                 break
+        self._conn.commit()
+        return count
+
+    async def _sync_preview_urls(self, concurrency: int = 5) -> int:
+        """Fetch preview_url for Paper docs via sharing/get_file_metadata/batch."""
+        rows = self._conn.execute("SELECT id FROM metadata WHERE item_type = 'paper'").fetchall()
+        if not rows:
+            return 0
+
+        file_ids = [r[0] for r in rows]
+        batch_size = 100
+        count = 0
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def fetch_batch(batch: list[str]) -> int:
+            async with semaphore:
+                try:
+                    res = await self._client.rpc(
+                        "sharing/get_file_metadata/batch", {"files": batch}
+                    )
+                except Exception as exc:
+                    print(
+                        f"[sync] Warning: preview URL batch failed: {exc}",
+                        file=sys.stderr,
+                    )
+                    return 0
+                updated = 0
+                if not isinstance(res, list):
+                    return 0
+                for item in res:
+                    result = item.get("result", {})
+                    if result.get(".tag") != "metadata":
+                        continue
+                    preview_url = result.get("preview_url")
+                    file_id = result.get("id")
+                    if preview_url and file_id:
+                        self._conn.execute(
+                            "UPDATE metadata SET url = ? WHERE id = ?",
+                            (preview_url, file_id),
+                        )
+                        updated += 1
+                return updated
+
+        batches = [file_ids[i : i + batch_size] for i in range(0, len(file_ids), batch_size)]
+        tasks = [fetch_batch(batch) for batch in batches]
+        results = await asyncio.gather(*tasks)
+        count = sum(results)
         self._conn.commit()
         return count
 
