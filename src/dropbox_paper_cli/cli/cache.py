@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import typer
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from dropbox_paper_cli.cli.common import get_auth_service as _get_auth_service
 from dropbox_paper_cli.cli.common import get_formatter as _get_formatter
 from dropbox_paper_cli.cli.common import safe_command
 from dropbox_paper_cli.db.connection import CacheDatabase
-from dropbox_paper_cli.models.cache import SyncResult
 from dropbox_paper_cli.services.cache_service import CacheService
+
+if TYPE_CHECKING:
+    from dropbox_paper_cli.models.cache import SyncResult
 
 cache_app = typer.Typer(name="cache", help="Local metadata cache and search.", no_args_is_help=True)
 
@@ -25,31 +28,12 @@ def _get_cache_service(db: CacheDatabase) -> CacheService:
     return CacheService(conn=db.conn, client=client)
 
 
-def _make_progress_callback(
-    is_tty: bool,
-) -> tuple[Callable[[SyncResult], None], Callable[[], None]]:
-    """Return (on_progress callback, finalizer).
-
-    Progress is written to stderr only when connected to a TTY.
-    Finalizer clears the progress line.
-    """
-    last_reported = [0]
-
-    def on_progress(r: SyncResult) -> None:
-        total = r.added + r.updated
-        if not is_tty:
-            return
-        if total - last_reported[0] >= 100 or total == 0:
-            sys.stderr.write(f"\r  ⏳ {total:,} items processed...")
-            sys.stderr.flush()
-            last_reported[0] = total
-
-    def finalize() -> None:
-        if is_tty and last_reported[0] > 0:
-            sys.stderr.write("\r" + " " * 40 + "\r")
-            sys.stderr.flush()
-
-    return on_progress, finalize
+_PHASE_LABELS = {
+    "metadata": "Syncing metadata",
+    "preview_urls": "Fetching Paper preview URLs",
+    "shared_links": "Fetching sharing links",
+    "done": "Done",
+}
 
 
 @cache_app.command()
@@ -64,24 +48,13 @@ def sync(
     with safe_command(fmt), CacheDatabase() as db:
         fmt.verbose(f"Sync path={path!r} full={full} concurrency={concurrency}")
         svc = _get_cache_service(db)
+        is_tty = sys.stderr.isatty() and not fmt.json_mode
 
-        is_tty = sys.stderr.isatty()
-        on_progress, finalize = _make_progress_callback(is_tty and not fmt.json_mode)
+        if is_tty:
+            result = _sync_with_rich_progress(svc, full=full, path=path, concurrency=concurrency)
+        else:
+            result = _sync_plain(svc, full=full, path=path, concurrency=concurrency)
 
-        if not fmt.json_mode:
-            typer.echo("Syncing metadata...")
-
-        async def _run_sync():
-            async with svc.client:
-                return await svc.sync(
-                    force_full=full,
-                    path=path,
-                    concurrency=concurrency,
-                    on_progress=on_progress,
-                )
-
-        result = asyncio.run(_run_sync())
-        finalize()
         fmt.verbose(
             f"Sync done: type={result.sync_type} added={result.added} "
             f"updated={result.updated} removed={result.removed} ({result.duration_seconds}s)"
@@ -109,6 +82,62 @@ def sync(
                 typer.echo(f"  Links:   {result.links_cached} sharing URLs cached")
             typer.echo("")
             typer.echo(f"✓ Sync complete ({result.duration_seconds}s)")
+
+
+def _sync_with_rich_progress(
+    svc: CacheService, *, full: bool, path: str, concurrency: int
+) -> SyncResult:
+    """Run sync with a rich spinner + progress counters on stderr."""
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[bold]{task.description}"),
+        TextColumn("{task.fields[detail]}", style="dim"),
+        TimeElapsedColumn(),
+        transient=True,
+        console=_stderr_console(),
+    )
+
+    task_id = progress.add_task("Syncing metadata...", detail="", total=None)
+
+    def on_progress(r: SyncResult) -> None:
+        label = _PHASE_LABELS.get(r.phase, r.phase)
+        if r.phase == "metadata":
+            total = r.added + r.updated
+            detail = f"{total:,} items" if total else ""
+            progress.update(task_id, description=f"{label}...", detail=detail)
+        elif r.phase in ("preview_urls", "shared_links"):
+            progress.update(task_id, description=f"{label}...", detail="")
+        else:
+            progress.update(task_id, description=label, detail="")
+
+    async def _run() -> SyncResult:
+        async with svc.client:
+            return await svc.sync(
+                force_full=full,
+                path=path,
+                concurrency=concurrency,
+                on_progress=on_progress,
+            )
+
+    with progress:
+        return asyncio.run(_run())
+
+
+def _sync_plain(svc: CacheService, *, full: bool, path: str, concurrency: int) -> SyncResult:
+    """Run sync with no interactive progress (non-TTY / JSON mode)."""
+
+    async def _run() -> SyncResult:
+        async with svc.client:
+            return await svc.sync(force_full=full, path=path, concurrency=concurrency)
+
+    return asyncio.run(_run())
+
+
+def _stderr_console():
+    """Create a rich Console that writes to stderr."""
+    from rich.console import Console  # noqa: PLC0415
+
+    return Console(stderr=True)
 
 
 @cache_app.command()

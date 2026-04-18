@@ -26,3 +26,5 @@ class SyncResult:
     duration_seconds: float = 0.0
     sync_type: str = "full"
     links_cached: int = 0
+    phase: str = "metadata"
+    phase_detail: str = ""
