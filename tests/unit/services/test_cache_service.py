@@ -150,7 +150,8 @@ class TestFullSyncNoSubfolders:
         await svc.sync(path="/")
 
         mock_client.rpc.assert_any_call(
-            "files/list_folder", {"path": "", "recursive": False, "limit": 2000}
+            "files/list_folder",
+            {"path": "", "recursive": False, "limit": 2000, "include_non_downloadable_files": True},
         )
 
 

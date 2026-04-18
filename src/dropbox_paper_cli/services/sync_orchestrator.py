@@ -111,7 +111,12 @@ class SyncOrchestrator:
                 try:
                     res = await self._client.rpc(
                         "files/list_folder",
-                        {"path": folder_path, "recursive": True, "limit": 2000},
+                        {
+                            "path": folder_path,
+                            "recursive": True,
+                            "limit": 2000,
+                            "include_non_downloadable_files": True,
+                        },
                     )
                     entries = list(res.get("entries", []))
                     while res.get("has_more"):
@@ -224,7 +229,12 @@ class SyncOrchestrator:
                 try:
                     res = await self._client.rpc(
                         "files/list_folder",
-                        {"path": folder_path, "recursive": True, "limit": 2000},
+                        {
+                            "path": folder_path,
+                            "recursive": True,
+                            "limit": 2000,
+                            "include_non_downloadable_files": True,
+                        },
                     )
                     entries = list(res.get("entries", []))
                     while res.get("has_more"):
@@ -304,7 +314,12 @@ class SyncOrchestrator:
         """List top-level entries (non-recursive), returning (all_entries, folder_entries)."""
         res = await self._client.rpc(
             "files/list_folder",
-            {"path": path, "recursive": False, "limit": 2000},
+            {
+                "path": path,
+                "recursive": False,
+                "limit": 2000,
+                "include_non_downloadable_files": True,
+            },
         )
         entries = list(res.get("entries", []))
         while res.get("has_more"):
