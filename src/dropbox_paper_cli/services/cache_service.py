@@ -31,6 +31,11 @@ class CacheService:
         self._conn = conn
         self._client = client
 
+    @property
+    def client(self) -> DropboxHttpClient:
+        """Expose the HTTP client so callers can enter the async context."""
+        return self._client
+
     # ── Sync Operations ───────────────────────────────────────────
 
     async def sync(

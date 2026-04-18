@@ -180,6 +180,7 @@ class DropboxService:
             "files/paper/create",
             {"path": path, "import_format": {".tag": import_format}},
             content,
+            host="api",
         )
         return PaperCreateResult.from_api(result)
 
@@ -223,5 +224,6 @@ class DropboxService:
             "files/paper/update",
             params,
             content,
+            host="api",
         )
         return PaperUpdateResult.from_api(result)

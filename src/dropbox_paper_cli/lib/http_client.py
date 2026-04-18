@@ -277,11 +277,19 @@ class DropboxHttpClient:
     ) -> dict:
         """RPC endpoint call: JSON in/out via api.dropboxapi.com."""
         url = f"{_RPC_BASE}/2/{endpoint}"
+        # Dropbox RPC endpoints expect JSON body; use b"null" when no params
+        # (the API rejects empty body with Content-Type: application/json)
+        if params is not None:
+            body_kwargs: dict[str, Any] = {"json": params}
+        else:
+            body_kwargs = {
+                "content": b"null",
+                "headers": {"Content-Type": "application/json"},
+            }
         response = await self._request(
             "POST",
             url,
-            json=params,
-            headers={"Content-Type": "application/json"},
+            **body_kwargs,
             timeout=timeout,
         )
         return response.json()
@@ -315,9 +323,16 @@ class DropboxHttpClient:
         data: bytes,
         *,
         timeout: httpx.Timeout = CONTENT_TIMEOUT,
+        host: str = "content",
     ) -> dict:
-        """Content-upload: binary body, JSON response."""
-        url = f"{_CONTENT_BASE}/2/{endpoint}"
+        """Content-upload: binary body, JSON response.
+
+        Args:
+            host: "content" for content.dropboxapi.com (default),
+                  "api" for api.dropboxapi.com (paper create/update endpoints).
+        """
+        base = _RPC_BASE if host == "api" else _CONTENT_BASE
+        url = f"{base}/2/{endpoint}"
         response = await self._request(
             "POST",
             url,
