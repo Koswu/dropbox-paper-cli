@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import typer
 
-from dropbox_paper_cli.cli.common import get_http_client as _get_http_client  # noqa: F401
 from dropbox_paper_cli.lib.url_parser import is_dropbox_url, resolve_target
 from dropbox_paper_cli.services.dropbox_service import DropboxService
 

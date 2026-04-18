@@ -1,8 +1,9 @@
-"""Shared CLI helpers: service factories, formatter, error handling."""
+"""Shared CLI helpers: service factories, async runner, formatter, error handling."""
 
 from __future__ import annotations
 
-from collections.abc import Generator
+import asyncio
+from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
 
 import typer
@@ -35,6 +36,21 @@ def get_http_client() -> DropboxHttpClient:
     """
     svc = AuthService()
     return svc.get_http_client()
+
+
+def run_with_client[T](fn: Callable[[DropboxHttpClient], Awaitable[T]]) -> T:
+    """Create an authenticated HTTP client, enter its async context, and run *fn*.
+
+    Combines client creation, ``async with client:``, and ``asyncio.run()``
+    into a single call so CLI commands don't repeat the boilerplate.
+    """
+    client = get_http_client()
+
+    async def _wrapper() -> T:
+        async with client:
+            return await fn(client)
+
+    return asyncio.run(_wrapper())
 
 
 @contextmanager
