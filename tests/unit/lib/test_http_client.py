@@ -58,9 +58,9 @@ class TestTimeoutConstants:
     """Verify timeout profiles per R-006."""
 
     def test_metadata_timeout_values(self):
-        assert METADATA_TIMEOUT.connect == 5.0
-        assert METADATA_TIMEOUT.read == 30.0
-        assert METADATA_TIMEOUT.pool == 5.0
+        assert METADATA_TIMEOUT.connect == 10.0
+        assert METADATA_TIMEOUT.read == 100.0
+        assert METADATA_TIMEOUT.pool == 10.0
 
     def test_content_timeout_values(self):
         assert CONTENT_TIMEOUT.connect == 5.0
