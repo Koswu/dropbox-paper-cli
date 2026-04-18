@@ -63,6 +63,8 @@ class SyncOrchestrator:
         else:
             result = await self._full_sync_parallel(path, concurrency, progress)
             result.sync_type = "full"
+            # Fetch and cache sharing links on full sync
+            result.links_cached = await self._sync_shared_links()
 
         result.duration_seconds = round(time.monotonic() - start, 2)
         result.total = self._count_metadata()
@@ -311,6 +313,39 @@ class SyncOrchestrator:
         folders = [e for e in entries if e.get(".tag") == "folder"]
         return entries, folders
 
+    # ── Shared-Link Sync ─────────────────────────────────────────
+
+    async def _sync_shared_links(self) -> int:
+        """Fetch all shared links and cache URLs by file ID. Returns count cached."""
+        # Clear stale URLs so revoked links don't linger
+        self._conn.execute("UPDATE metadata SET url = NULL WHERE url IS NOT NULL")
+
+        count = 0
+        cursor: str | None = None
+        while True:
+            params: dict[str, Any] = {}
+            if cursor:
+                params["cursor"] = cursor
+            try:
+                res = await self._client.rpc("sharing/list_shared_links", params or None)
+            except Exception as exc:
+                print(f"[sync] Warning: link sync failed: {exc}", file=sys.stderr)
+                break
+            for link in res.get("links", []):
+                file_id = link.get("id")
+                url = link.get("url")
+                if file_id and url:
+                    rowcount = self._conn.execute(
+                        "UPDATE metadata SET url = ? WHERE id = ?", (url, file_id)
+                    ).rowcount
+                    count += rowcount
+            if res.get("has_more") and res.get("cursor"):
+                cursor = res["cursor"]
+            else:
+                break
+        self._conn.commit()
+        return count
+
     # ── Entry Conversion ─────────────────────────────────────────
 
     def _entry_to_cached(self, entry: dict[str, Any]) -> CachedMetadata | None:
@@ -357,13 +392,36 @@ class SyncOrchestrator:
         )
 
     def _upsert_metadata(self, cached: CachedMetadata) -> None:
-        """Insert or replace a metadata entry."""
+        """Insert or replace a metadata entry, preserving any cached URL."""
         self._conn.execute(
-            """INSERT OR REPLACE INTO metadata
+            """INSERT INTO metadata
             (id, name, path_display, path_lower, is_dir, item_type, parent_path,
-             size_bytes, server_modified, rev, content_hash, synced_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            cached.to_row(),
+             size_bytes, server_modified, rev, content_hash, url, synced_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, (SELECT url FROM metadata WHERE id = ?)), ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name, path_display=excluded.path_display,
+                path_lower=excluded.path_lower, is_dir=excluded.is_dir,
+                item_type=excluded.item_type, parent_path=excluded.parent_path,
+                size_bytes=excluded.size_bytes, server_modified=excluded.server_modified,
+                rev=excluded.rev, content_hash=excluded.content_hash,
+                url=COALESCE(excluded.url, metadata.url),
+                synced_at=excluded.synced_at""",
+            (
+                cached.id,
+                cached.name,
+                cached.path_display,
+                cached.path_lower,
+                1 if cached.is_dir else 0,
+                cached.item_type,
+                cached.parent_path,
+                cached.size_bytes,
+                cached.server_modified,
+                cached.rev,
+                cached.content_hash,
+                cached.url,
+                cached.id,
+                cached.synced_at,
+            ),
         )
 
     # ── Delete Detection ─────────────────────────────────────────

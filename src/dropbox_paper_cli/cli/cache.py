@@ -95,6 +95,7 @@ def sync(
                     "updated": result.updated,
                     "removed": result.removed,
                     "total": result.total,
+                    "links_cached": result.links_cached,
                     "duration_seconds": result.duration_seconds,
                     "sync_type": result.sync_type,
                 }
@@ -104,6 +105,8 @@ def sync(
             typer.echo(f"  Updated: {result.updated} items")
             typer.echo(f"  Removed: {result.removed} items")
             typer.echo(f"  Total:   {result.total:,} items in cache")
+            if result.links_cached > 0:
+                typer.echo(f"  Links:   {result.links_cached} sharing URLs cached")
             typer.echo("")
             typer.echo(f"✓ Sync complete ({result.duration_seconds}s)")
 

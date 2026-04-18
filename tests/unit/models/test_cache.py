@@ -53,10 +53,11 @@ class TestCachedMetadata:
             synced_at="2025-01-01T00:00:00Z",
         )
         row = entry.to_row()
-        assert len(row) == 12
+        assert len(row) == 13
         assert row[0] == "id:1"
         assert row[4] == 0  # is_dir as integer
         assert row[5] == "file"  # item_type
+        assert row[11] is None  # url
 
     def test_from_row(self):
         row = (

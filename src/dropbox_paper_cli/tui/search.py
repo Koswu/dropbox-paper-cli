@@ -68,6 +68,12 @@ class SearchApp(App):
         self._spinner_index = 0
         self._spinner_message = ""
 
+    def _get_db_conn(self) -> sqlite3.Connection:
+        """Open a WAL-mode connection for background DB writes."""
+        conn = sqlite3.connect(str(self._db_path))
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
+
     def compose(self) -> ComposeResult:
         yield Header()
         yield Input(
@@ -206,6 +212,10 @@ class SearchApp(App):
         if item.is_dir:
             self.notify("Sharing links not supported for folders", severity="warning")
             return
+        if item.url:
+            self.status_text = f"🔗 {item.url}"
+            self.notify(f"Link: {item.url}", severity="information")
+            return
         self._start_spinner(f"Getting link for {item.name}...")
         self._fetch_link(item)
 
@@ -221,6 +231,12 @@ class SearchApp(App):
 
             result = self._run_async(_get_link)
             url = result["url"]
+            # Lazy cache: write URL to DB and update in-memory item
+            item.url = url
+            conn = self._get_db_conn()
+            conn.execute("UPDATE metadata SET url = ? WHERE id = ?", (url, item.id))
+            conn.commit()
+            conn.close()
             self.call_from_thread(self._stop_spinner)
             self.call_from_thread(setattr, self, "status_text", f"🔗 {url}")
             self.call_from_thread(self.notify, f"Link: {url}", severity="information")
@@ -237,6 +253,10 @@ class SearchApp(App):
         if item.is_dir:
             self.notify("Cannot open folders in browser", severity="warning")
             return
+        if item.url:
+            webbrowser.open(item.url)
+            self.status_text = f"Opened {item.url}"
+            return
         self._start_spinner(f"Opening {item.name} in browser...")
         self._open_in_browser(item)
 
@@ -252,6 +272,12 @@ class SearchApp(App):
 
             result = self._run_async(_get_link)
             url = result["url"]
+            # Lazy cache
+            item.url = url
+            conn = self._get_db_conn()
+            conn.execute("UPDATE metadata SET url = ? WHERE id = ?", (url, item.id))
+            conn.commit()
+            conn.close()
             webbrowser.open(url)
             self.call_from_thread(self._stop_spinner)
             self.call_from_thread(setattr, self, "status_text", f"Opened {url}")

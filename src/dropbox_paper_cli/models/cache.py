@@ -26,6 +26,7 @@ class CachedMetadata:
     server_modified: str | None = None
     rev: str | None = None
     content_hash: str | None = None
+    url: str | None = None
     synced_at: str = field(
         default_factory=lambda: datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     )
@@ -44,6 +45,7 @@ class CachedMetadata:
             self.server_modified,
             self.rev,
             self.content_hash,
+            self.url,
             self.synced_at,
         )
 
@@ -62,5 +64,6 @@ class CachedMetadata:
             server_modified=row[8] if len(row) > 8 else None,
             rev=row[9] if len(row) > 9 else None,
             content_hash=row[10] if len(row) > 10 else None,
-            synced_at=row[11] if len(row) > 11 else "",
+            url=row[11] if len(row) > 11 else None,
+            synced_at=row[12] if len(row) > 12 else "",
         )

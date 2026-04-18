@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # ── DDL Statements ────────────────────────────────────────────────
 
@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS metadata (
     server_modified TEXT,
     rev             TEXT,
     content_hash    TEXT,
+    url             TEXT,
     synced_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 """
@@ -124,6 +125,17 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
+    """Add url column for caching sharing links."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(metadata)").fetchall()}
+    if "url" in cols:
+        return
+
+    conn.execute("ALTER TABLE metadata ADD COLUMN url TEXT")
+    conn.execute("INSERT OR REPLACE INTO schema_version (version) VALUES (3)")
+    conn.commit()
+
+
 def initialize_schema(conn: sqlite3.Connection) -> None:
     """Create all tables, indexes, FTS5 virtual table, and triggers.
 
@@ -148,6 +160,9 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
         # Rebuild FTS index to ensure consistency after migration
         conn.execute("INSERT INTO metadata_fts(metadata_fts) VALUES('rebuild')")
         conn.commit()
+
+    if current < 3:
+        _migrate_v2_to_v3(conn)
 
     # Post-migration indexes (depend on columns added by migrations)
     conn.executescript(_POST_MIGRATION_INDEXES)
