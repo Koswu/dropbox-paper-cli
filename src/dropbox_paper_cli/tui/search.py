@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import sqlite3
+import sys
 import webbrowser
 from pathlib import Path
 
@@ -204,15 +204,22 @@ class SearchApp(App):
 
         return asyncio.run(_wrapper())
 
+    def _try_copy(self, url: str) -> None:
+        """Copy URL to clipboard with fallback notification on failure."""
+        try:
+            self.copy_to_clipboard(url)
+            self.notify(f"✅ Copied: {url}", severity="information")
+        except Exception:
+            self.notify(f"🔗 {url}", severity="information")
+
     def action_get_link(self) -> None:
         item = self._get_selected()
         if item is None:
             self.notify("No item selected — select a row first", severity="warning")
             return
         if item.url:
-            self.copy_to_clipboard(item.url)
-            self.status_text = f"✅ Copied: {item.url}"
-            self.notify(f"✅ Copied: {item.url}", severity="information")
+            self.status_text = f"🔗 {item.url}"
+            self._try_copy(item.url)
             return
         if item.is_dir:
             self.notify("No URL cached for this folder", severity="warning")
@@ -239,9 +246,8 @@ class SearchApp(App):
             conn.commit()
             conn.close()
             self.call_from_thread(self._stop_spinner)
-            self.call_from_thread(self.copy_to_clipboard, url)
-            self.call_from_thread(setattr, self, "status_text", f"✅ Copied: {url}")
-            self.call_from_thread(self.notify, f"✅ Copied: {url}", severity="information")
+            self.call_from_thread(setattr, self, "status_text", f"🔗 {url}")
+            self.call_from_thread(self._try_copy, url)
         except Exception as e:
             self.call_from_thread(self._stop_spinner)
             self.call_from_thread(setattr, self, "status_text", f"Error: {e}")
@@ -326,4 +332,4 @@ def run_search_tui(initial_query: str = "", db_path: Path | None = None) -> None
     app = SearchApp(db_path=db_path, initial_query=initial_query)
     app.run()
     # Force exit: worker threads may still be blocking on network I/O
-    os._exit(0)
+    sys.exit(0)

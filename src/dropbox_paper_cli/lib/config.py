@@ -6,17 +6,38 @@ import contextlib
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 
 _APP_NAME = "dropbox-paper-cli"
 
-# XDG base directories
-_xdg_config = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-_xdg_data = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
 
-# App directories following XDG spec
-CONFIG_DIR: Path = Path(os.environ.get("PAPER_CLI_CONFIG_DIR", _xdg_config / _APP_NAME))
-DATA_DIR: Path = Path(os.environ.get("PAPER_CLI_DATA_DIR", _xdg_data / _APP_NAME))
+def _default_config_dir() -> Path:
+    """Platform-aware default config directory."""
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        return base / _APP_NAME
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / _APP_NAME
+    # Linux / other: XDG
+    xdg = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return xdg / _APP_NAME
+
+
+def _default_data_dir() -> Path:
+    """Platform-aware default data directory."""
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        return base / _APP_NAME
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / _APP_NAME
+    # Linux / other: XDG
+    xdg = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    return xdg / _APP_NAME
+
+
+CONFIG_DIR: Path = Path(os.environ.get("PAPER_CLI_CONFIG_DIR", _default_config_dir()))
+DATA_DIR: Path = Path(os.environ.get("PAPER_CLI_DATA_DIR", _default_data_dir()))
 
 # Token storage (config — user-specific settings)
 TOKEN_PATH: Path = CONFIG_DIR / "tokens.json"
