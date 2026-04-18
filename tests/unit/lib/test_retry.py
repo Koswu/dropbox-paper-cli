@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from dropbox_paper_cli.lib.errors import NetworkError
+from dropbox_paper_cli.lib.errors import NetworkError, RateLimitError
 from dropbox_paper_cli.lib.retry import with_retry
 
 
@@ -110,6 +110,31 @@ class TestRetryExhaustion:
         with pytest.raises(NetworkError, match="Server error \\(HTTP 500\\) after 2 retries"):
             await decorated()
         assert mock_fn.call_count == 3
+
+    async def test_raises_rate_limit_error_after_429_exhaustion(self):
+        mock_fn = AsyncMock(
+            side_effect=[
+                _make_http_status_error(429, retry_after="0.01"),
+                _make_http_status_error(429, retry_after="0.01"),
+                _make_http_status_error(429, retry_after="0.01"),
+            ]
+        )
+        decorated = with_retry(max_retries=2, base_delay=0.01)(mock_fn)
+        with pytest.raises(RateLimitError, match="Rate limited.*429.*after 2 retries"):
+            await decorated()
+        assert mock_fn.call_count == 3
+
+    async def test_rate_limit_error_carries_retry_after(self):
+        mock_fn = AsyncMock(
+            side_effect=[
+                _make_http_status_error(429, retry_after="42"),
+                _make_http_status_error(429, retry_after="42"),
+            ]
+        )
+        decorated = with_retry(max_retries=1, base_delay=0.01)(mock_fn)
+        with pytest.raises(RateLimitError) as exc_info:
+            await decorated()
+        assert exc_info.value.retry_after == pytest.approx(42.0)
 
 
 class TestRetryNonRetryableError:

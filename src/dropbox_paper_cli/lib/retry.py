@@ -15,7 +15,7 @@ from typing import Any, TypeVar, cast
 
 import httpx
 
-from dropbox_paper_cli.lib.errors import NetworkError
+from dropbox_paper_cli.lib.errors import NetworkError, RateLimitError
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -80,6 +80,12 @@ def with_retry(
                             ) from exc
                         if isinstance(exc, httpx.HTTPStatusError):
                             code = exc.response.status_code
+                            if code == 429:
+                                retry_after = _get_retry_after(exc)
+                                raise RateLimitError(
+                                    f"Rate limited (HTTP 429) after {max_retries} retries",
+                                    retry_after=retry_after,
+                                ) from exc
                             raise NetworkError(
                                 f"Server error (HTTP {code}) after {max_retries} retries"
                             ) from exc
