@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import os
 import secrets
+import stat
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -137,9 +140,10 @@ class AuthService:
     # ── Token Persistence ─────────────────────────────────────────
 
     def save_token(self, token: AuthToken) -> None:
-        """Persist token to disk with atomic write and 0600 permissions."""
+        """Persist token to disk with atomic write and restrictive permissions."""
         self._config_dir.mkdir(parents=True, exist_ok=True)
-        os.chmod(self._config_dir, 0o700)
+        if sys.platform != "win32":
+            os.chmod(self._config_dir, 0o700)
 
         data = json.dumps(token.to_dict(), indent=2)
 
@@ -147,11 +151,17 @@ class AuthService:
         try:
             os.write(fd, data.encode())
             os.close(fd)
-            os.chmod(tmp_path, 0o600)
-            os.rename(tmp_path, self._token_path)
+            fd = -1  # mark as closed
+            if sys.platform != "win32":
+                os.chmod(tmp_path, 0o600)
+            else:
+                os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
+            os.replace(tmp_path, self._token_path)
         except Exception:
-            os.close(fd) if not os.get_inheritable(fd) else None
-            if os.path.exists(tmp_path):
+            if fd >= 0:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
             raise
 
