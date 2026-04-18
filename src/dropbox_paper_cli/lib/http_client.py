@@ -37,7 +37,7 @@ logger = logging.getLogger("dropbox_paper_cli.lib.http_client")
 
 # ── Timeout Profiles (R-006) ─────────────────────────────────────
 
-METADATA_TIMEOUT = httpx.Timeout(30.0, connect=5.0, read=30.0, pool=5.0)
+METADATA_TIMEOUT = httpx.Timeout(100.0, connect=10.0, read=100.0, pool=10.0)
 CONTENT_TIMEOUT = httpx.Timeout(30.0, connect=5.0, read=30.0, pool=5.0)
 
 # ── API Base URLs ─────────────────────────────────────────────────
