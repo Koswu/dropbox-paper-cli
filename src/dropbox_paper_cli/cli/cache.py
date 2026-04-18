@@ -121,12 +121,9 @@ def search(
     fmt = _get_formatter(ctx)
     with safe_command(fmt), CacheDatabase() as db:
         fmt.verbose(f"Searching query={query!r} type={item_type} limit={limit}")
-        # Search doesn't need a Dropbox client — just use the DB directly
-        from dropbox_paper_cli.services.cache_service import CacheService
+        from dropbox_paper_cli.services.cache_service import search_cache
 
-        # Create a service with a dummy client for search-only
-        svc = CacheService(conn=db.conn, client=None)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-        results = svc.search(query, item_type=item_type, limit=limit)
+        results = search_cache(db.conn, query, item_type=item_type, limit=limit)
         fmt.verbose(f"Found {len(results)} results")
 
         if fmt.json_mode:

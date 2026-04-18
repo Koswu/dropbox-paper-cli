@@ -150,10 +150,9 @@ class SearchApp(App):
         try:
             conn = sqlite3.connect(str(self._db_path))
             conn.execute("PRAGMA journal_mode=WAL")
-            from dropbox_paper_cli.services.cache_service import CacheService
+            from dropbox_paper_cli.services.cache_service import search_cache
 
-            svc = CacheService(conn=conn, client=None)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-            results = svc.search(query, limit=100)
+            results = search_cache(conn, query, limit=100)
             conn.close()
             self._results = results
             self.call_from_thread(self._update_table, results)
