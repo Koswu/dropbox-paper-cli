@@ -15,9 +15,14 @@ A Python CLI tool for managing Dropbox Paper documents from the terminal — bro
 - **Paper Doc Updates** — overwrite, append, prepend, or revision-safe update existing Paper documents
 - **Paper Doc Export** — read Paper documents as Markdown directly in your terminal
 - **Local Cache & Search** — sync your full Dropbox directory tree to a local SQLite database for instant keyword search (FTS5 + CJK fallback)
-- **Interactive TUI Search** — Textual-powered interactive search with keyboard shortcuts to get links, open in browser, or preview documents
-- **Parallel Sync** — 20-concurrent-worker pipeline for large workspaces (configurable)
+- **Paper Doc Discovery** — discovers all Paper 2.0 documents including those in team Paper folders
+- **URL Resolution** — every cached item gets a web URL (constructed for files, sharing links for Paper docs)
+- **Interactive TUI Search** — Textual-powered interactive search with F2 to copy link, F3 to open in browser
+- **Adaptive Concurrency** — starts conservatively and ramps up, automatically backs off on 429 rate limits
+- **Two-Level Parallel Sync** — expands top-level folders one level deep for dramatically higher parallelism (3x faster on large workspaces)
+- **Rich Progress Display** — multi-phase progress bar showing metadata, preview URLs, and sharing link sync stages
 - **Team Account Support** — automatic namespace detection for Dropbox Business accounts
+- **Cross-Platform** — works on Linux, macOS, and Windows with platform-aware config paths
 - **JSON Output** — `--json` flag on all commands for scripting
 - **Verbose Logging** — `--verbose` flag for diagnostic output on all commands
 
@@ -191,9 +196,8 @@ paper cache isearch "initial query"  # Open TUI with pre-filled query
 | Key | Action |
 |-----|--------|
 | Enter | Move focus to results table |
-| F2 | Get sharing link for selected item |
-| F3 | Open selected item in browser |
-| F4 | Preview Paper document content |
+| F2 | Copy link to clipboard |
+| F3 | Open in browser |
 | Escape | Quit |
 
 ### Sharing
@@ -212,11 +216,13 @@ paper --version       # Show version
 
 ## Architecture
 
-- **HTTP Layer**: httpx-based async client (`lib/http_client.py`) with automatic token refresh, retry logic, and Dropbox API v2 RPC/content endpoints
-- **Services**: `DropboxService` (file/folder ops), `SharingService`, `CacheService` (sync), standalone `search_cache()` for FTS5 queries
+- **HTTP Layer**: httpx-based async client (`lib/http_client.py`) with automatic token refresh, retry with exponential backoff, and Dropbox API v2 RPC/content endpoints
+- **Adaptive Concurrency**: `AdaptiveLimiter` starts at a conservative level, ramps up on success (+2), and backs off on 429 rate limits (ceiling × 0.7), settling at ceiling × 0.8
+- **Services**: `DropboxService` (file/folder ops), `SharingService`, `SyncOrchestrator` (parallel sync with two-level expansion), standalone `search_cache()` for FTS5 queries
+- **Sync Pipeline**: root listing → shallow expansion → parallel recursive on sub-folders, with per-folder cursors for efficient incremental sync
 - **CLI**: Typer-based commands with `run_with_client()` helper for consistent async execution
-- **TUI**: Textual-powered interactive search app with background workers for network operations
-- **Cache**: SQLite with FTS5 full-text search, LIKE fallback for CJK, WAL mode for concurrent reads
+- **TUI**: Textual-powered interactive search app with clipboard integration and browser launch
+- **Cache**: SQLite with FTS5 full-text search, LIKE fallback for CJK, WAL mode, indexed `path_lower` for fast subtree operations
 
 ## Data Storage
 
