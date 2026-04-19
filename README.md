@@ -182,6 +182,7 @@ paper cache sync --path "/subfolder" # Sync specific subtree
 paper cache sync --concurrency 10    # Custom worker count
 
 paper cache search QUERY             # Search by keyword
+paper cache search QUERY --url        # Show URL for each result
 paper cache search QUERY --type paper   # Filter: paper docs only
 paper cache search QUERY --type folder  # Filter: folders only
 paper cache search QUERY --type file    # Filter: regular files only
