@@ -37,6 +37,7 @@ class CacheDatabase:
             self._conn = sqlite3.connect(str(self._db_path))
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
+            self._conn.execute("PRAGMA case_sensitive_like=ON")
             initialize_schema(self._conn)
         except sqlite3.DatabaseError:
             # Corruption recovery: delete and recreate
@@ -46,6 +47,7 @@ class CacheDatabase:
             self._conn = sqlite3.connect(str(self._db_path))
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
+            self._conn.execute("PRAGMA case_sensitive_like=ON")
             initialize_schema(self._conn)
 
     @property
