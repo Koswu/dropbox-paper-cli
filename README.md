@@ -14,7 +14,7 @@ A Python CLI tool for managing Dropbox Paper documents from the terminal — bro
 - **Paper Doc Creation** — create new Paper documents from Markdown, HTML, or plain text
 - **Paper Doc Updates** — overwrite, append, prepend, or revision-safe update existing Paper documents
 - **Paper Doc Export** — read Paper documents as Markdown directly in your terminal
-- **Local Cache & Search** — sync your full Dropbox directory tree to a local SQLite database for instant keyword search (FTS5 + CJK fallback)
+- **Local Cache & Search** — sync your full Dropbox directory tree to a local SQLite database for instant keyword search with full CJK support
 - **Paper Doc Discovery** — discovers all Paper 2.0 documents including those in team Paper folders
 - **URL Resolution** — every cached item gets a web URL (constructed for files, sharing links for Paper docs)
 - **Interactive TUI Search** — Textual-powered interactive search with F2 to copy link, F3 to open in browser
@@ -219,11 +219,11 @@ paper --version       # Show version
 
 - **HTTP Layer**: httpx-based async client (`lib/http_client.py`) with automatic token refresh, retry with exponential backoff, and Dropbox API v2 RPC/content endpoints
 - **Adaptive Concurrency**: `AdaptiveLimiter` starts at a conservative level, ramps up on success (+2), and backs off on 429 rate limits (ceiling × 0.7), settling at ceiling × 0.8
-- **Services**: `DropboxService` (file/folder ops), `SharingService`, `SyncOrchestrator` (parallel sync with two-level expansion), standalone `search_cache()` for FTS5 queries
+- **Services**: `DropboxService` (file/folder ops), `SharingService`, `SyncOrchestrator` (parallel sync with two-level expansion), standalone `search_cache()` for keyword queries
 - **Sync Pipeline**: root listing → shallow expansion → parallel recursive on sub-folders, with per-folder cursors for efficient incremental sync
 - **CLI**: Typer-based commands with `run_with_client()` helper for consistent async execution
 - **TUI**: Textual-powered interactive search app with clipboard integration and browser launch
-- **Cache**: SQLite with FTS5 full-text search, LIKE fallback for CJK, WAL mode, indexed `path_lower` for fast subtree operations
+- **Cache**: SQLite with LIKE keyword search (full CJK support), WAL mode, indexed `path_lower` for fast subtree operations
 
 ## Data Storage
 
