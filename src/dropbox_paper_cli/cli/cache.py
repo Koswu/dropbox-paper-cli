@@ -145,7 +145,7 @@ def search(
     ctx: typer.Context,
     query: str = typer.Argument(..., help="Search keyword(s)"),
     item_type: str | None = typer.Option(
-        None, "--type", help="Filter by item type: file or folder"
+        None, "--type", help="Filter by item type: paper, file, or folder"
     ),
     limit: int = typer.Option(50, "--limit", help="Maximum results to return"),
 ) -> None:
