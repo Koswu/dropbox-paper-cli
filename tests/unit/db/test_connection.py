@@ -79,8 +79,8 @@ class TestSchemaInitialization:
             table_names = {t[0] for t in tables}
             assert "sync_state" in table_names
 
-    def test_fts_table_exists(self, tmp_db_path):
+    def test_no_fts_table(self, tmp_db_path):
         with CacheDatabase(db_path=tmp_db_path) as db:
             tables = db.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
             table_names = {t[0] for t in tables}
-            assert "metadata_fts" in table_names
+            assert "metadata_fts" not in table_names

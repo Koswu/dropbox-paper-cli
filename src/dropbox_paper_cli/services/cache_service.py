@@ -1,4 +1,4 @@
-"""Cache service: sync facade and FTS5 search."""
+"""Cache service: sync facade and LIKE-based search."""
 
 from __future__ import annotations
 
@@ -41,40 +41,29 @@ def search_cache(
     item_type: str | None = None,
     limit: int = 50,
 ) -> list[CachedMetadata]:
-    """Search file and folder names using FTS5, with LIKE fallback for CJK.
+    """Search file and folder names using LIKE substring match.
 
-    FTS5's unicode61 tokenizer does not segment CJK characters, so when
-    FTS returns no results the search transparently falls back to a
-    LIKE-based substring match on name and path.
+    Results are ordered by relevance: name matches first (shorter names
+    ranked higher), then path-only matches.
     """
-    fts_query = query.strip()
-    if not fts_query:
+    q = query.strip()
+    if not q:
         return []
 
     tc = _type_clause(item_type)
-    # Try FTS5 first
+    pattern = f"%{q}%"
     rows = conn.execute(
         f"""
         SELECT {_SELECT_COLS}
         FROM metadata m
-        JOIN metadata_fts ON m.rowid = metadata_fts.rowid
-        WHERE metadata_fts MATCH ? {tc}
+        WHERE (m.name LIKE ? OR m.path_display LIKE ?) {tc}
+        ORDER BY
+            (m.name LIKE ?) DESC,
+            LENGTH(m.name)
         LIMIT ?
         """,
-        (fts_query, limit),
+        (pattern, pattern, pattern, limit),
     ).fetchall()
-    if not rows:
-        # Fallback: LIKE substring search (works for CJK)
-        pattern = f"%{fts_query}%"
-        rows = conn.execute(
-            f"""
-            SELECT {_SELECT_COLS}
-            FROM metadata m
-            WHERE (m.name LIKE ? OR m.path_display LIKE ?) {tc}
-            LIMIT ?
-            """,
-            (pattern, pattern, limit),
-        ).fetchall()
     return [CachedMetadata.from_row(row) for row in rows]
 
 
