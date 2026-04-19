@@ -1,4 +1,4 @@
-"""Tests for schema DDL: tables, FTS5, triggers, sync_state, schema_version."""
+"""Tests for schema DDL: tables, indexes, sync_state, schema_version."""
 
 from __future__ import annotations
 
@@ -96,69 +96,20 @@ class TestIndexes:
         assert len(indexes) == 1
 
 
-class TestFTS5:
-    """FTS5 virtual table and triggers."""
+class TestNoFTS5:
+    """FTS5 table should not exist after v4 migration."""
 
-    def test_fts_table_exists(self, conn):
+    def test_no_fts_table(self, conn):
         tables = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='metadata_fts'"
         ).fetchall()
-        assert len(tables) == 1
+        assert len(tables) == 0
 
-    def test_fts_insert_trigger(self, conn):
-        """Inserting into metadata automatically populates FTS."""
-        conn.execute(
-            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
-            VALUES ('id:1', 'Meeting Notes.paper', '/Meeting Notes.paper', '/meeting notes.paper', 0)"""
-        )
-        conn.commit()
-        results = conn.execute(
-            "SELECT * FROM metadata_fts WHERE metadata_fts MATCH 'Meeting'"
+    def test_no_fts_triggers(self, conn):
+        triggers = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'metadata_fts_%'"
         ).fetchall()
-        assert len(results) == 1
-
-    def test_fts_delete_trigger(self, conn):
-        """Deleting from metadata removes from FTS."""
-        conn.execute(
-            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
-            VALUES ('id:1', 'Meeting Notes.paper', '/Meeting Notes.paper', '/meeting notes.paper', 0)"""
-        )
-        conn.commit()
-        conn.execute("DELETE FROM metadata WHERE id = 'id:1'")
-        conn.commit()
-        results = conn.execute(
-            "SELECT * FROM metadata_fts WHERE metadata_fts MATCH 'Meeting'"
-        ).fetchall()
-        assert len(results) == 0
-
-    def test_fts_update_trigger(self, conn):
-        """Updating metadata updates FTS."""
-        conn.execute(
-            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
-            VALUES ('id:1', 'Old Name.paper', '/Old Name.paper', '/old name.paper', 0)"""
-        )
-        conn.commit()
-        conn.execute(
-            """UPDATE metadata SET name = 'New Name.paper', path_display = '/New Name.paper'
-            WHERE id = 'id:1'"""
-        )
-        conn.commit()
-        old = conn.execute("SELECT * FROM metadata_fts WHERE metadata_fts MATCH 'Old'").fetchall()
-        new = conn.execute("SELECT * FROM metadata_fts WHERE metadata_fts MATCH 'New'").fetchall()
-        assert len(old) == 0
-        assert len(new) == 1
-
-    def test_fts_search_by_path(self, conn):
-        """FTS can search by path_display."""
-        conn.execute(
-            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
-            VALUES ('id:1', 'notes.paper', '/Project/notes.paper', '/project/notes.paper', 0)"""
-        )
-        conn.commit()
-        results = conn.execute(
-            "SELECT * FROM metadata_fts WHERE metadata_fts MATCH 'Project'"
-        ).fetchall()
-        assert len(results) == 1
+        assert len(triggers) == 0
 
 
 class TestSyncStateTable:
@@ -264,10 +215,10 @@ class TestMigrationV1ToV2:
         rows = v1_conn.execute("SELECT item_type FROM metadata ORDER BY id").fetchall()
         assert [r[0] for r in rows] == ["paper", "file", "folder"]
 
-    def test_migration_preserves_fts(self, v1_conn):
-        """FTS search works after migration."""
+    def test_migration_drops_fts(self, v1_conn):
+        """v4 migration removes FTS5 table."""
         initialize_schema(v1_conn)
-        results = v1_conn.execute(
-            "SELECT * FROM metadata_fts WHERE metadata_fts MATCH 'notes'"
+        tables = v1_conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='metadata_fts'"
         ).fetchall()
-        assert len(results) == 1
+        assert len(tables) == 0

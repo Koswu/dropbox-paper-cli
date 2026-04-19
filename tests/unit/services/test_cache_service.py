@@ -1,4 +1,4 @@
-"""Tests for cache_service: async parallel full sync, incremental sync, search via FTS5."""
+"""Tests for cache_service: async parallel full sync, incremental sync, search via LIKE."""
 
 from __future__ import annotations
 
@@ -441,7 +441,7 @@ class TestProgressCallback:
 
 
 class TestSearch:
-    """FTS5 keyword search with type filter and limit."""
+    """LIKE-based keyword search with type filter and limit."""
 
     def test_search_by_name(self, conn):
         conn.execute(

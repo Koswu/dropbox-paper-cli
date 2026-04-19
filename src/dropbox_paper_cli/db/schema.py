@@ -1,10 +1,10 @@
-"""Schema DDL for the metadata cache: tables, FTS5, triggers, sync_state."""
+"""Schema DDL for the metadata cache: tables, indexes, sync_state."""
 
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # ── DDL Statements ────────────────────────────────────────────────
 
@@ -36,39 +36,6 @@ CREATE INDEX IF NOT EXISTS idx_metadata_path_lower ON metadata(path_lower);
 # Indexes that depend on columns added by migrations — applied after migrations run
 _POST_MIGRATION_INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_metadata_item_type ON metadata(item_type);
-"""
-
-_FTS5_TABLE = """
-CREATE VIRTUAL TABLE IF NOT EXISTS metadata_fts USING fts5(
-    name,
-    path_display,
-    content=metadata,
-    content_rowid=rowid,
-    tokenize='unicode61'
-);
-"""
-
-_FTS_TRIGGER_INSERT = """
-CREATE TRIGGER IF NOT EXISTS metadata_fts_insert AFTER INSERT ON metadata BEGIN
-    INSERT INTO metadata_fts(rowid, name, path_display)
-    VALUES (new.rowid, new.name, new.path_display);
-END;
-"""
-
-_FTS_TRIGGER_DELETE = """
-CREATE TRIGGER IF NOT EXISTS metadata_fts_delete AFTER DELETE ON metadata BEGIN
-    INSERT INTO metadata_fts(metadata_fts, rowid, name, path_display)
-    VALUES ('delete', old.rowid, old.name, old.path_display);
-END;
-"""
-
-_FTS_TRIGGER_UPDATE = """
-CREATE TRIGGER IF NOT EXISTS metadata_fts_update AFTER UPDATE ON metadata BEGIN
-    INSERT INTO metadata_fts(metadata_fts, rowid, name, path_display)
-    VALUES ('delete', old.rowid, old.name, old.path_display);
-    INSERT INTO metadata_fts(rowid, name, path_display)
-    VALUES (new.rowid, new.name, new.path_display);
-END;
 """
 
 _SYNC_STATE_TABLE = """
@@ -119,9 +86,6 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE metadata SET item_type = 'folder' WHERE is_dir = 1")
     conn.execute("UPDATE metadata SET item_type = 'paper' WHERE is_dir = 0 AND name LIKE '%.paper'")
 
-    # Recreate FTS triggers
-    conn.executescript(_FTS_TRIGGER_INSERT + _FTS_TRIGGER_DELETE + _FTS_TRIGGER_UPDATE)
-
     conn.execute("INSERT OR REPLACE INTO schema_version (version) VALUES (2)")
     conn.commit()
 
@@ -137,33 +101,34 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
+    """Drop FTS5 table and triggers — replaced by LIKE search."""
+    conn.execute("DROP TRIGGER IF EXISTS metadata_fts_update")
+    conn.execute("DROP TRIGGER IF EXISTS metadata_fts_insert")
+    conn.execute("DROP TRIGGER IF EXISTS metadata_fts_delete")
+    conn.execute("DROP TABLE IF EXISTS metadata_fts")
+    conn.execute("INSERT OR REPLACE INTO schema_version (version) VALUES (4)")
+    conn.commit()
+
+
 def initialize_schema(conn: sqlite3.Connection) -> None:
-    """Create all tables, indexes, FTS5 virtual table, and triggers.
+    """Create all tables, indexes, and sync_state.
 
     Safe to call multiple times (uses IF NOT EXISTS).
     Runs migrations when upgrading from an older schema version.
     """
-    conn.executescript(
-        _METADATA_TABLE
-        + _INDEXES
-        + _FTS5_TABLE
-        + _FTS_TRIGGER_INSERT
-        + _FTS_TRIGGER_DELETE
-        + _FTS_TRIGGER_UPDATE
-        + _SYNC_STATE_TABLE
-        + _SCHEMA_VERSION_TABLE
-    )
+    conn.executescript(_METADATA_TABLE + _INDEXES + _SYNC_STATE_TABLE + _SCHEMA_VERSION_TABLE)
 
     current = _get_current_version(conn)
 
     if current < 2:
         _migrate_v1_to_v2(conn)
-        # Rebuild FTS index to ensure consistency after migration
-        conn.execute("INSERT INTO metadata_fts(metadata_fts) VALUES('rebuild')")
-        conn.commit()
 
     if current < 3:
         _migrate_v2_to_v3(conn)
+
+    if current < 4:
+        _migrate_v3_to_v4(conn)
 
     # Post-migration indexes (depend on columns added by migrations)
     conn.executescript(_POST_MIGRATION_INDEXES)

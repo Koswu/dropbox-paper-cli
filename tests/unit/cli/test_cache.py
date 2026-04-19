@@ -114,7 +114,7 @@ class TestCacheSearch:
     """paper cache search <QUERY> [--type] [--limit]"""
 
     def test_search_results(self, runner):
-        """Integration test using real SQLite with FTS5."""
+        """Integration test using real SQLite with LIKE search."""
         conn = sqlite3.connect(":memory:")
         initialize_schema(conn)
 
