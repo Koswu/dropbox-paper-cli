@@ -148,6 +148,7 @@ def search(
         None, "--type", help="Filter by item type: paper, file, or folder"
     ),
     limit: int = typer.Option(50, "--limit", help="Maximum results to return"),
+    show_url: bool = typer.Option(False, "--url", help="Show URL for each result"),
 ) -> None:
     """Search file and folder names in the local cache by keyword."""
     fmt = _get_formatter(ctx)
@@ -168,6 +169,7 @@ def search(
                             "name": r.name,
                             "path": r.path_display,
                             "type": r.item_type,
+                            "url": r.url,
                         }
                         for r in results
                     ],
@@ -183,7 +185,10 @@ def search(
             for r in results:
                 tag = {"paper": "📝", "folder": "📁", "file": "📄"}.get(r.item_type, "📄")
                 name = f"{r.name}/" if r.is_dir else r.name
-                typer.echo(f"{tag} [{r.item_type:<6s}] {name:<30s} {r.path_display}")
+                line = f"{tag} [{r.item_type:<6s}] {name:<30s} {r.path_display}"
+                if show_url and r.url:
+                    line += f"\n   🔗 {r.url}"
+                typer.echo(line)
 
 
 @cache_app.command()
