@@ -134,21 +134,20 @@ class DropboxHttpClient:
                 raise ValidationError(f"API error: {response.text}") from None
             summary = body.get("error_summary", "")
 
-            # Paper-specific patterns
-            if "non_exportable" in summary:
-                raise ValidationError("Not a Paper document")
-            if "invalid_file_extension" in summary:
-                raise ValidationError("Path must end with .paper")
-            if "email_unverified" in summary:
-                raise ValidationError("Email must be verified")
-            if "paper_disabled" in summary:
-                raise ValidationError("Paper is disabled for this team")
-            if "doc_archived" in summary:
-                raise ValidationError("Document is archived")
+            # Pattern → exception mapping (checked in order)
+            _VALIDATION_ERRORS: dict[str, str] = {
+                "non_exportable": "Not a Paper document",
+                "invalid_file_extension": "Path must end with .paper",
+                "email_unverified": "Email must be verified",
+                "paper_disabled": "Paper is disabled for this team",
+                "doc_archived": "Document is archived",
+                "revision_mismatch": "Revision mismatch",
+            }
+            for pattern, msg in _VALIDATION_ERRORS.items():
+                if pattern in summary:
+                    raise ValidationError(msg)
             if "doc_deleted" in summary:
                 raise NotFoundError("Document is deleted")
-            if "revision_mismatch" in summary:
-                raise ValidationError("Revision mismatch")
 
             # General patterns
             if "not_found" in summary:
@@ -158,7 +157,6 @@ class DropboxHttpClient:
             if "conflict" in summary:
                 raise ValidationError(f"Conflict: {summary}")
             if "shared_link_already_exists" in summary:
-                # Special: caller handles this
                 raise ValidationError(f"shared_link_already_exists:{json.dumps(body)}")
 
             raise ValidationError(f"API error: {summary}")

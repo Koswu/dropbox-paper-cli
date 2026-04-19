@@ -121,13 +121,7 @@ class SyncOrchestrator:
         seen_work_ids: set[str] = set()
         expansion_ok = True
 
-        async def _expand(folder: dict) -> tuple[list[dict], list[dict]] | Exception:
-            try:
-                return await self._list_top_level(folder.get("path_lower", ""))
-            except Exception as exc:
-                return exc
-
-        expand_results = await asyncio.gather(*[_expand(f) for f in folders])
+        expand_results = await asyncio.gather(*[self._expand_folder(f) for f in folders])
 
         for folder, expand_result in zip(folders, expand_results, strict=True):
             if isinstance(expand_result, Exception):
@@ -179,13 +173,7 @@ class SyncOrchestrator:
                             "include_non_downloadable_files": True,
                         },
                     )
-                    entries = list(res.get("entries", []))
-                    while res.get("has_more"):
-                        res = await self._client.rpc(
-                            "files/list_folder/continue",
-                            {"cursor": res["cursor"]},
-                        )
-                        entries.extend(res.get("entries", []))
+                    entries, cursor = await self._paginate_folder(res)
                     async with lock:
                         for entry in entries:
                             self._process_full_entry(entry, existing_ids, seen_ids, result)
@@ -193,7 +181,7 @@ class SyncOrchestrator:
                         if total % _PROGRESS_INTERVAL < len(entries):
                             self._conn.commit()
                             on_progress(result)
-                        folder_cursors[folder_id] = res.get("cursor", "")
+                        folder_cursors[folder_id] = cursor
                     await limiter.on_success()
                 except RateLimitError:
                     await limiter.on_rate_limit()
@@ -250,13 +238,7 @@ class SyncOrchestrator:
             return result
 
         # Step 2: Expand one level to discover current sub-folders
-        async def _expand(folder: dict) -> tuple[list[dict], list[dict]] | Exception:
-            try:
-                return await self._list_top_level(folder.get("path_lower", ""))
-            except Exception as exc:
-                return exc
-
-        expand_results = await asyncio.gather(*[_expand(f) for f in top_folders])
+        expand_results = await asyncio.gather(*[self._expand_folder(f) for f in top_folders])
 
         current_work_units: dict[str, dict] = {}
         for folder, expand_result in zip(top_folders, expand_results, strict=True):
@@ -293,27 +275,23 @@ class SyncOrchestrator:
                     result.added += 1
                 self._upsert_metadata(cached)
 
-            # Detect level-1 deletions
-            db_children = {
-                row[0]
-                for row in self._conn.execute(
-                    "SELECT id FROM metadata WHERE parent_path = ?", (parent_path,)
-                ).fetchall()
-            }
-            stale = db_children - level1_seen
-            for sid in stale:
-                row = self._conn.execute(
-                    "SELECT path_lower, is_dir FROM metadata WHERE id = ?", (sid,)
-                ).fetchone()
-                if row:
-                    self._conn.execute("DELETE FROM metadata WHERE id = ?", (sid,))
-                    result.removed += 1
-                    if row[1]:  # is_dir — also remove sub-tree
-                        count = self._conn.execute(
-                            "DELETE FROM metadata WHERE path_lower LIKE ?",
-                            (row[0] + "/%",),
-                        ).rowcount
-                        result.removed += count
+            # Detect level-1 deletions (bulk-load to avoid N+1 queries)
+            db_children: dict[str, tuple[str, bool]] = {}
+            for row in self._conn.execute(
+                "SELECT id, path_lower, is_dir FROM metadata WHERE parent_path = ?",
+                (parent_path,),
+            ).fetchall():
+                db_children[row[0]] = (row[1], bool(row[2]))
+            for sid in set(db_children) - level1_seen:
+                path_lower, is_dir = db_children[sid]
+                self._conn.execute("DELETE FROM metadata WHERE id = ?", (sid,))
+                result.removed += 1
+                if is_dir:
+                    count = self._conn.execute(
+                        "DELETE FROM metadata WHERE path_lower LIKE ?",
+                        (path_lower + "/%",),
+                    ).rowcount
+                    result.removed += count
 
             for sf in sub_folders:
                 current_work_units[sf["id"]] = sf
@@ -352,17 +330,11 @@ class SyncOrchestrator:
                         "files/list_folder/continue",
                         {"cursor": cursor},
                     )
-                    entries = list(res.get("entries", []))
-                    while res.get("has_more"):
-                        res = await self._client.rpc(
-                            "files/list_folder/continue",
-                            {"cursor": res["cursor"]},
-                        )
-                        entries.extend(res.get("entries", []))
+                    entries, new_cursor = await self._paginate_folder(res)
                     async with lock:
                         for entry in entries:
                             self._process_incremental_entry(entry, existing_ids, seen_ids, result)
-                        folder_cursors[folder_id] = res.get("cursor", "")
+                        folder_cursors[folder_id] = new_cursor
                     await limiter.on_success()
                 except RateLimitError:
                     await limiter.on_rate_limit()
@@ -393,17 +365,11 @@ class SyncOrchestrator:
                             "include_non_downloadable_files": True,
                         },
                     )
-                    entries = list(res.get("entries", []))
-                    while res.get("has_more"):
-                        res = await self._client.rpc(
-                            "files/list_folder/continue",
-                            {"cursor": res["cursor"]},
-                        )
-                        entries.extend(res.get("entries", []))
+                    entries, cursor = await self._paginate_folder(res)
                     async with lock:
                         for entry in entries:
                             self._process_incremental_entry(entry, existing_ids, seen_ids, result)
-                        folder_cursors[folder_id] = res.get("cursor", "")
+                        folder_cursors[folder_id] = cursor
                     await limiter.on_success()
                 except RateLimitError:
                     await limiter.on_rate_limit()
@@ -471,7 +437,26 @@ class SyncOrchestrator:
             return
         self._process_full_entry(entry, existing_ids, seen_ids, result)
 
-    # ── Top-Level Listing ────────────────────────────────────────
+    # ── Folder Listing Helpers ───────────────────────────────────
+
+    async def _paginate_folder(self, initial_res: dict) -> tuple[list[dict], str]:
+        """Drain paginated list_folder/continue responses, returning (entries, cursor)."""
+        entries = list(initial_res.get("entries", []))
+        res = initial_res
+        while res.get("has_more"):
+            res = await self._client.rpc(
+                "files/list_folder/continue",
+                {"cursor": res["cursor"]},
+            )
+            entries.extend(res.get("entries", []))
+        return entries, res.get("cursor", "")
+
+    async def _expand_folder(self, folder: dict) -> tuple[list[dict], list[dict]] | Exception:
+        """Expand a folder non-recursively, returning result or exception."""
+        try:
+            return await self._list_top_level(folder.get("path_lower", ""))
+        except Exception as exc:
+            return exc
 
     async def _list_top_level(self, path: str) -> tuple[list[dict], list[dict]]:
         """List top-level entries (non-recursive), returning (all_entries, folder_entries)."""
@@ -484,13 +469,7 @@ class SyncOrchestrator:
                 "include_non_downloadable_files": True,
             },
         )
-        entries = list(res.get("entries", []))
-        while res.get("has_more"):
-            res = await self._client.rpc(
-                "files/list_folder/continue",
-                {"cursor": res["cursor"]},
-            )
-            entries.extend(res.get("entries", []))
+        entries, _ = await self._paginate_folder(res)
         folders = [e for e in entries if e.get(".tag") == "folder"]
         return entries, folders
 

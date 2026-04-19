@@ -30,6 +30,7 @@ _INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_metadata_parent_path ON metadata(parent_path);
 CREATE INDEX IF NOT EXISTS idx_metadata_is_dir ON metadata(is_dir);
 CREATE INDEX IF NOT EXISTS idx_metadata_name ON metadata(name);
+CREATE INDEX IF NOT EXISTS idx_metadata_path_lower ON metadata(path_lower);
 """
 
 # Indexes that depend on columns added by migrations — applied after migrations run
