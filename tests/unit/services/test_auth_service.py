@@ -240,3 +240,142 @@ class TestTokenFileCompatibility:
         # Verify DropboxHttpClient can be initialized from it
         client = auth_service.get_http_client()
         assert isinstance(client, DropboxHttpClient)
+
+
+class TestNamespaceDetection:
+    """detect_and_cache_namespace and get_account_info namespace caching."""
+
+    async def test_get_account_info_caches_namespace(self, auth_service, sample_token):
+        """get_account_info should cache namespace IDs from the API response."""
+        auth_service.save_token(sample_token)
+
+        mock_client = AsyncMock(spec=DropboxHttpClient)
+        mock_client._token = sample_token
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.rpc = AsyncMock(
+            return_value={
+                "account_id": "dbid:AADtest",
+                "name": {"display_name": "Jane Doe"},
+                "email": "jane@example.com",
+                "root_info": {
+                    ".tag": "team",
+                    "root_namespace_id": "100",
+                    "home_namespace_id": "200",
+                },
+            }
+        )
+
+        with patch.object(auth_service, "get_http_client", return_value=mock_client):
+            result = await auth_service.get_account_info()
+
+        assert result["display_name"] == "Jane Doe"
+        # Verify namespace was persisted
+        reloaded = auth_service.load_token()
+        assert reloaded is not None
+        assert reloaded.root_namespace_id == "100"
+        assert reloaded.home_namespace_id == "200"
+
+    async def test_get_account_info_skips_if_namespace_cached(self, auth_service):
+        """get_account_info should not overwrite existing namespace."""
+        token = AuthToken(
+            access_token="sl.test",
+            refresh_token="test_refresh",
+            expires_at=9999999999.0,
+            account_id="dbid:AADtest",
+            root_namespace_id="existing_root",
+            home_namespace_id="existing_home",
+        )
+        auth_service.save_token(token)
+
+        mock_client = AsyncMock(spec=DropboxHttpClient)
+        mock_client._token = token
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.rpc = AsyncMock(
+            return_value={
+                "account_id": "dbid:AADtest",
+                "name": {"display_name": "Jane"},
+                "email": "jane@example.com",
+                "root_info": {
+                    "root_namespace_id": "new_root",
+                    "home_namespace_id": "new_home",
+                },
+            }
+        )
+
+        with patch.object(auth_service, "get_http_client", return_value=mock_client):
+            await auth_service.get_account_info()
+
+        reloaded = auth_service.load_token()
+        assert reloaded.root_namespace_id == "existing_root"
+        assert reloaded.home_namespace_id == "existing_home"
+
+    async def test_detect_and_cache_namespace_team_account(self, auth_service, sample_token):
+        """detect_and_cache_namespace caches namespace for team accounts."""
+        auth_service.save_token(sample_token)
+
+        mock_client = AsyncMock(spec=DropboxHttpClient)
+        mock_client._token = sample_token
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.rpc = AsyncMock(
+            return_value={
+                "root_info": {
+                    ".tag": "team",
+                    "root_namespace_id": "300",
+                    "home_namespace_id": "400",
+                },
+            }
+        )
+
+        with patch(
+            "dropbox_paper_cli.services.auth_service.DropboxHttpClient",
+            return_value=mock_client,
+        ):
+            await auth_service.detect_and_cache_namespace()
+
+        reloaded = auth_service.load_token()
+        assert reloaded.root_namespace_id == "300"
+        assert reloaded.home_namespace_id == "400"
+
+    async def test_detect_and_cache_namespace_skips_if_cached(self, auth_service):
+        """detect_and_cache_namespace is a no-op if namespace is already stored."""
+        token = AuthToken(
+            access_token="sl.test",
+            refresh_token="test_refresh",
+            expires_at=9999999999.0,
+            account_id="dbid:AADtest",
+            root_namespace_id="cached_root",
+            home_namespace_id="cached_home",
+        )
+        auth_service.save_token(token)
+
+        with patch(
+            "dropbox_paper_cli.services.auth_service.DropboxHttpClient",
+        ) as mock_cls:
+            await auth_service.detect_and_cache_namespace()
+            mock_cls.assert_not_called()
+
+    async def test_detect_and_cache_namespace_logs_on_error(self, auth_service, sample_token):
+        """detect_and_cache_namespace logs a warning on API failure."""
+        auth_service.save_token(sample_token)
+
+        mock_client = AsyncMock(spec=DropboxHttpClient)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.rpc = AsyncMock(side_effect=Exception("network error"))
+
+        with (
+            patch(
+                "dropbox_paper_cli.services.auth_service.DropboxHttpClient",
+                return_value=mock_client,
+            ),
+            patch("dropbox_paper_cli.services.auth_service.logger") as mock_logger,
+        ):
+            await auth_service.detect_and_cache_namespace()
+            mock_logger.warning.assert_called_once()
+
+        # Namespace should still be unset
+        reloaded = auth_service.load_token()
+        assert reloaded.root_namespace_id is None
