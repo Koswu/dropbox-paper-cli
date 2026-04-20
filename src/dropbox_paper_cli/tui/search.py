@@ -33,9 +33,7 @@ class SearchApp(App):
         margin: 0 1;
     }
     #status-bar {
-        dock: bottom;
         height: 1;
-        background: $surface;
         color: $text-muted;
         padding: 0 1;
     }
@@ -48,10 +46,12 @@ class SearchApp(App):
         Binding("escape", "quit", "Quit", priority=True),
         Binding("f2", "get_link", "Copy Link", priority=True),
         Binding("f3", "open_link", "Open", priority=True),
+        Binding("f5", "toggle_regex", "Regex", priority=True),
         Binding("down", "focus_table", "Focus Table", show=False),
     ]
 
     status_text: reactive[str] = reactive("")
+    regex_mode: reactive[bool] = reactive(False)
 
     def __init__(
         self,
@@ -63,6 +63,7 @@ class SearchApp(App):
         self._initial_query = initial_query
         self._results: list[CachedMetadata] = []
         self._debounce_timer: Timer | None = None
+        self._last_result_text: str = ""
         self._spinner_timer: Timer | None = None
         self._spinner_index = 0
         self._spinner_message = ""
@@ -80,17 +81,32 @@ class SearchApp(App):
             value=self._initial_query,
             id="search-input",
         )
+        yield Static(self.status_text, id="status-bar")
         with Vertical():
             yield DataTable(id="results-table")
-        yield Static(self.status_text, id="status-bar")
         yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#results-table", DataTable)
         table.cursor_type = "row"
         table.add_columns("", "Type", "Name", "Path")
+        self._refresh_status()
         if self._initial_query:
             self._run_search(self._initial_query)
+
+    def _mode_label(self) -> str:
+        return "🔣 Regex Mode" if self.regex_mode else "🔤 Keyword Mode"
+
+    def _refresh_status(self, result_text: str | None = None) -> None:
+        """Update status bar with mode indicator and optional result info."""
+        if self._spinner_timer is not None:
+            return
+        if result_text is not None:
+            self._last_result_text = result_text
+        parts = [self._mode_label()]
+        if self._last_result_text:
+            parts.append(self._last_result_text)
+        self.status_text = "  ".join(parts)
 
     async def action_quit(self) -> None:
         """Cancel all running workers before quitting."""
@@ -116,6 +132,13 @@ class SearchApp(App):
             self._spinner_timer.stop()
             self._spinner_timer = None
 
+    def watch_regex_mode(self, value: bool) -> None:
+        try:
+            inp = self.query_one("#search-input", Input)
+            inp.placeholder = "Type regex pattern..." if value else "Type to search..."
+        except Exception:
+            pass
+
     def watch_status_text(self, value: str) -> None:
         try:
             bar = self.query_one("#status-bar", Static)
@@ -139,31 +162,42 @@ class SearchApp(App):
         if table.row_count > 0:
             table.focus()
 
+    def action_toggle_regex(self) -> None:
+        """Toggle regex search mode and re-run the current query."""
+        self.regex_mode = not self.regex_mode
+        desc = "Regex ✓" if self.regex_mode else "Regex"
+        self.bind("f5", "toggle_regex", description=desc, show=True)
+        self.refresh_bindings()
+        self._refresh_status()
+        inp = self.query_one("#search-input", Input)
+        if inp.value.strip():
+            self._run_search(inp.value)
+
     def _run_search(self, query: str) -> None:
         query = query.strip()
         if not query:
             self._results = []
             self._update_table([])
             self._stop_spinner()
-            self.status_text = ""
+            self._refresh_status("")
             return
-        self._do_search(query)
+        self._do_search(query, self.regex_mode)
 
     @work(thread=True, exclusive=True, group="search")
-    def _do_search(self, query: str) -> None:
+    def _do_search(self, query: str, regex: bool = False) -> None:
         """Run search in a background thread with its own DB connection."""
         try:
             conn = sqlite3.connect(str(self._db_path))
             conn.execute("PRAGMA journal_mode=WAL")
             from dropbox_paper_cli.services.cache_service import search_cache
 
-            results = search_cache(conn, query, limit=100)
+            results = search_cache(conn, query, limit=100, regex=regex)
             conn.close()
             self._results = results
             self.call_from_thread(self._update_table, results)
-            self.call_from_thread(self._set_status_safe, f"{len(results)} result(s)")
+            self.call_from_thread(self._refresh_status, f"{len(results)} result(s)")
         except Exception as e:
-            self.call_from_thread(self._set_status_safe, f"Search error: {e}")
+            self.call_from_thread(self._refresh_status, f"⚠ {e}")
 
     def _update_table(self, results: list[CachedMetadata]) -> None:
         table = self.query_one("#results-table", DataTable)
@@ -172,11 +206,6 @@ class SearchApp(App):
             icon = {"paper": "📝", "folder": "📁", "file": "📄"}.get(r.item_type, "📄")
             name = f"{r.name}/" if r.is_dir else r.name
             table.add_row(icon, r.item_type, name, r.path_display, key=r.id)
-
-    def _set_status_safe(self, text: str) -> None:
-        """Set status text only when spinner is not active (avoids overwriting spinner)."""
-        if self._spinner_timer is None:
-            self.status_text = text
 
     def _get_selected(self) -> CachedMetadata | None:
         table = self.query_one("#results-table", DataTable)
