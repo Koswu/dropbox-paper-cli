@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from typing import TYPE_CHECKING
 
@@ -40,8 +41,16 @@ def search_cache(
     *,
     item_type: str | None = None,
     limit: int = 50,
+    regex: bool = False,
 ) -> list[CachedMetadata]:
-    """Search file and folder names using LIKE substring match.
+    """Search file and folder names in the local cache.
+
+    Supports three modes:
+    - **Single keyword** (default): LIKE substring match.
+    - **Multi-keyword**: space-separated words are ANDed — all must match
+      somewhere in the name or path.
+    - **Regex** (``regex=True``): Python ``re`` pattern matched against
+      name and path_display.
 
     Results are ordered by relevance: name matches first (shorter names
     ranked higher), then path-only matches.
@@ -51,7 +60,21 @@ def search_cache(
         return []
 
     tc = _type_clause(item_type)
-    pattern = f"%{q}%"
+
+    if regex:
+        return _search_regex(conn, q, tc, limit)
+
+    keywords = q.split()
+    if len(keywords) <= 1:
+        return _search_single(conn, q, tc, limit)
+    return _search_multi(conn, keywords, tc, limit)
+
+
+def _search_single(
+    conn: sqlite3.Connection, keyword: str, tc: str, limit: int
+) -> list[CachedMetadata]:
+    """LIKE search for a single keyword."""
+    pattern = f"%{keyword}%"
     rows = conn.execute(
         f"""
         SELECT {_SELECT_COLS}
@@ -59,6 +82,66 @@ def search_cache(
         WHERE (m.name LIKE ? OR m.path_display LIKE ?) {tc}
         ORDER BY
             (m.name LIKE ?) DESC,
+            LENGTH(m.name)
+        LIMIT ?
+        """,
+        (pattern, pattern, pattern, limit),
+    ).fetchall()
+    return [CachedMetadata.from_row(row) for row in rows]
+
+
+def _search_multi(
+    conn: sqlite3.Connection, keywords: list[str], tc: str, limit: int
+) -> list[CachedMetadata]:
+    """Multi-keyword AND search: all keywords must appear in name or path."""
+    where_parts: list[str] = []
+    params: list[str] = []
+    for kw in keywords:
+        p = f"%{kw}%"
+        where_parts.append("(m.name LIKE ? OR m.path_display LIKE ?)")
+        params.extend([p, p])
+
+    # Ordering: items where ALL keywords match the name rank highest
+    name_match_parts = " + ".join("(m.name LIKE ?)" for _ in keywords)
+    order_params = [f"%{kw}%" for kw in keywords]
+
+    where_clause = " AND ".join(where_parts)
+    sql = f"""
+        SELECT {_SELECT_COLS}
+        FROM metadata m
+        WHERE {where_clause} {tc}
+        ORDER BY
+            ({name_match_parts}) DESC,
+            LENGTH(m.name)
+        LIMIT ?
+    """
+    all_params = params + order_params + [limit]
+    rows = conn.execute(sql, all_params).fetchall()
+    return [CachedMetadata.from_row(row) for row in rows]
+
+
+def _regexp_func(pattern: str, text: str | None) -> bool:
+    """SQLite REGEXP function: returns True if *text* matches *pattern*."""
+    if text is None:
+        return False
+    try:
+        return re.search(pattern, text, re.IGNORECASE) is not None
+    except re.error:
+        return False
+
+
+def _search_regex(
+    conn: sqlite3.Connection, pattern: str, tc: str, limit: int
+) -> list[CachedMetadata]:
+    """Regex search using a registered REGEXP function."""
+    conn.create_function("REGEXP", 2, _regexp_func, deterministic=True)
+    rows = conn.execute(
+        f"""
+        SELECT {_SELECT_COLS}
+        FROM metadata m
+        WHERE (m.name REGEXP ? OR m.path_display REGEXP ?) {tc}
+        ORDER BY
+            (m.name REGEXP ?) DESC,
             LENGTH(m.name)
         LIMIT ?
         """,

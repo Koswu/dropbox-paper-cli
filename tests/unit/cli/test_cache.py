@@ -273,8 +273,68 @@ class TestCacheSearch:
 
         conn.close()
 
+    def test_search_regex_flag(self, runner):
+        """--regex flag passes regex=True to search_cache."""
+        conn = sqlite3.connect(":memory:")
+        initialize_schema(conn)
 
-class TestCacheIsearch:
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:1', 'Q1 Report.paper', '/Q1 Report.paper', '/q1 report.paper', 0)"""
+        )
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:2', 'Summary.paper', '/Summary.paper', '/summary.paper', 0)"""
+        )
+        conn.commit()
+
+        with (
+            patch("dropbox_paper_cli.cli.cache.CacheDatabase") as mock_db_cls,
+        ):
+            mock_db = MagicMock()
+            mock_db.conn = conn
+            mock_db.__enter__ = MagicMock(return_value=mock_db)
+            mock_db.__exit__ = MagicMock(return_value=False)
+            mock_db_cls.return_value = mock_db
+
+            result = runner.invoke(app, ["cache", "search", "--regex", r"Q\d+"])
+            assert result.exit_code == 0
+            assert "Q1 Report.paper" in result.stdout
+            assert "Summary.paper" not in result.stdout
+
+        conn.close()
+
+    def test_search_multi_keyword(self, runner):
+        """Space-separated keywords are ANDed."""
+        conn = sqlite3.connect(":memory:")
+        initialize_schema(conn)
+
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:1', 'Meeting Notes.paper', '/Meeting Notes.paper', '/meeting notes.paper', 0)"""
+        )
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:2', 'Meeting Agenda.paper', '/Meeting Agenda.paper', '/meeting agenda.paper', 0)"""
+        )
+        conn.commit()
+
+        with (
+            patch("dropbox_paper_cli.cli.cache.CacheDatabase") as mock_db_cls,
+        ):
+            mock_db = MagicMock()
+            mock_db.conn = conn
+            mock_db.__enter__ = MagicMock(return_value=mock_db)
+            mock_db.__exit__ = MagicMock(return_value=False)
+            mock_db_cls.return_value = mock_db
+
+            result = runner.invoke(app, ["cache", "search", "Meeting Notes"])
+            assert result.exit_code == 0
+            assert "Meeting Notes.paper" in result.stdout
+            assert "Meeting Agenda.paper" not in result.stdout
+
+        conn.close()
+
     """paper cache isearch tests."""
 
     def test_isearch_rejects_json_mode(self, runner):

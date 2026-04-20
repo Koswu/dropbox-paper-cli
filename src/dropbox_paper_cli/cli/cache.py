@@ -155,20 +155,21 @@ def _stderr_console():
 @cache_app.command()
 def search(
     ctx: typer.Context,
-    query: str = typer.Argument(..., help="Search keyword(s)"),
+    query: str = typer.Argument(..., help="Search keyword(s); multiple words are ANDed"),
     item_type: str | None = typer.Option(
         None, "--type", help="Filter by item type: paper, file, or folder"
     ),
     limit: int = typer.Option(50, "--limit", help="Maximum results to return"),
     show_url: bool = typer.Option(False, "--url", help="Show URL for each result"),
+    regex: bool = typer.Option(False, "--regex", "-r", help="Treat query as a regex pattern"),
 ) -> None:
     """Search file and folder names in the local cache by keyword."""
     fmt = _get_formatter(ctx)
     with safe_command(fmt), CacheDatabase() as db:
-        fmt.verbose(f"Searching query={query!r} type={item_type} limit={limit}")
+        fmt.verbose(f"Searching query={query!r} type={item_type} limit={limit} regex={regex}")
         from dropbox_paper_cli.services.cache_service import search_cache
 
-        results = search_cache(db.conn, query, item_type=item_type, limit=limit)
+        results = search_cache(db.conn, query, item_type=item_type, limit=limit, regex=regex)
         fmt.verbose(f"Found {len(results)} results")
 
         if fmt.json_mode:

@@ -515,6 +515,197 @@ class TestSearch:
         assert results == []
 
 
+class TestMultiKeywordSearch:
+    """Multi-keyword AND search: all keywords must match somewhere."""
+
+    def test_two_keywords_both_match(self, conn):
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:1', 'Meeting Notes.paper', '/Work/Meeting Notes.paper', '/work/meeting notes.paper', 0)"""
+        )
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:2', 'TODO.paper', '/Work/TODO.paper', '/work/todo.paper', 0)"""
+        )
+        conn.commit()
+
+        results = search_cache(conn, "Meeting Notes")
+        assert len(results) == 1
+        assert results[0].name == "Meeting Notes.paper"
+
+    def test_keyword_across_name_and_path(self, conn):
+        """One keyword matches name, the other matches path."""
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:1', 'Notes.paper', '/Projects/Notes.paper', '/projects/notes.paper', 0)"""
+        )
+        conn.commit()
+
+        results = search_cache(conn, "Projects Notes")
+        assert len(results) == 1
+        assert results[0].name == "Notes.paper"
+
+    def test_keyword_partial_match_excludes(self, conn):
+        """If only one of two keywords matches, the item is excluded."""
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:1', 'Meeting.paper', '/Meeting.paper', '/meeting.paper', 0)"""
+        )
+        conn.commit()
+
+        results = search_cache(conn, "Meeting Budget")
+        assert results == []
+
+    def test_three_keywords(self, conn):
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:1', 'Q1 Budget Review.paper', '/Finance/Q1 Budget Review.paper',
+                    '/finance/q1 budget review.paper', 0)"""
+        )
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:2', 'Q1 Budget.paper', '/Finance/Q1 Budget.paper',
+                    '/finance/q1 budget.paper', 0)"""
+        )
+        conn.commit()
+
+        results = search_cache(conn, "Q1 Budget Review")
+        assert len(results) == 1
+        assert results[0].name == "Q1 Budget Review.paper"
+
+    def test_name_matches_ranked_higher(self, conn):
+        """Items where all keywords match in name rank above path-only matches."""
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:1', 'AB.paper', '/X/Y/AB.paper', '/x/y/ab.paper', 0)"""
+        )
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:2', 'Short.paper', '/A/B/Short.paper', '/a/b/short.paper', 0)"""
+        )
+        conn.commit()
+
+        results = search_cache(conn, "A B")
+        # id:1 name "AB.paper" matches both A and B in name; id:2 matches A and B only in path
+        assert len(results) == 2
+        assert results[0].id == "id:1"
+
+    def test_multi_keyword_with_type_filter(self, conn):
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, item_type)
+            VALUES ('id:1', 'Meeting Notes.paper', '/Meeting Notes.paper', '/meeting notes.paper', 0, 'paper')"""
+        )
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, item_type)
+            VALUES ('id:2', 'Meeting Notes', '/Meeting Notes', '/meeting notes', 1, 'folder')"""
+        )
+        conn.commit()
+
+        results = search_cache(conn, "Meeting Notes", item_type="folder")
+        assert len(results) == 1
+        assert results[0].item_type == "folder"
+
+
+class TestRegexSearch:
+    """Regex search mode using Python re patterns."""
+
+    def test_simple_regex(self, conn):
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:1', 'Meeting Notes.paper', '/Meeting Notes.paper', '/meeting notes.paper', 0)"""
+        )
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:2', 'TODO.paper', '/TODO.paper', '/todo.paper', 0)"""
+        )
+        conn.commit()
+
+        results = search_cache(conn, r"^Meeting", regex=True)
+        assert len(results) == 1
+        assert results[0].name == "Meeting Notes.paper"
+
+    def test_regex_alternation(self, conn):
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:1', 'Budget.paper', '/Budget.paper', '/budget.paper', 0)"""
+        )
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:2', 'Report.paper', '/Report.paper', '/report.paper', 0)"""
+        )
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:3', 'TODO.paper', '/TODO.paper', '/todo.paper', 0)"""
+        )
+        conn.commit()
+
+        results = search_cache(conn, r"Budget|Report", regex=True)
+        assert len(results) == 2
+        names = {r.name for r in results}
+        assert names == {"Budget.paper", "Report.paper"}
+
+    def test_regex_digit_pattern(self, conn):
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:1', 'Q1 Report.paper', '/Q1 Report.paper', '/q1 report.paper', 0)"""
+        )
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:2', 'Summary.paper', '/Summary.paper', '/summary.paper', 0)"""
+        )
+        conn.commit()
+
+        results = search_cache(conn, r"Q\d+", regex=True)
+        assert len(results) == 1
+        assert results[0].name == "Q1 Report.paper"
+
+    def test_regex_case_insensitive(self, conn):
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:1', 'MEETING.paper', '/MEETING.paper', '/meeting.paper', 0)"""
+        )
+        conn.commit()
+
+        results = search_cache(conn, r"meeting", regex=True)
+        assert len(results) == 1
+
+    def test_regex_invalid_pattern_returns_empty(self, conn):
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:1', 'test.paper', '/test.paper', '/test.paper', 0)"""
+        )
+        conn.commit()
+
+        # Invalid regex — unclosed group
+        results = search_cache(conn, r"(unclosed", regex=True)
+        assert results == []
+
+    def test_regex_path_match(self, conn):
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir)
+            VALUES ('id:1', 'doc.paper', '/Finance/2024/doc.paper', '/finance/2024/doc.paper', 0)"""
+        )
+        conn.commit()
+
+        results = search_cache(conn, r"Finance/\d{4}", regex=True)
+        assert len(results) == 1
+
+    def test_regex_with_type_filter(self, conn):
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, item_type)
+            VALUES ('id:1', 'Notes.paper', '/Notes.paper', '/notes.paper', 0, 'paper')"""
+        )
+        conn.execute(
+            """INSERT INTO metadata (id, name, path_display, path_lower, is_dir, item_type)
+            VALUES ('id:2', 'Notes', '/Notes', '/notes', 1, 'folder')"""
+        )
+        conn.commit()
+
+        results = search_cache(conn, r"^Notes", regex=True, item_type="paper")
+        assert len(results) == 1
+        assert results[0].item_type == "paper"
+
+
 class TestLinkSync:
     """Shared link sync during full sync."""
 
