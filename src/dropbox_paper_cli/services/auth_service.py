@@ -6,6 +6,7 @@ import base64
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import secrets
 import stat
@@ -21,6 +22,8 @@ from dropbox_paper_cli.lib.config import CONFIG_DIR, TOKEN_PATH, get_app_key, ge
 from dropbox_paper_cli.lib.errors import AuthenticationError
 from dropbox_paper_cli.lib.http_client import DropboxHttpClient
 from dropbox_paper_cli.models.auth import AuthToken
+
+logger = logging.getLogger("dropbox_paper_cli.services.auth_service")
 
 _AUTH_BASE_URL = "https://www.dropbox.com/oauth2/authorize"
 _TOKEN_URL = "https://api.dropboxapi.com/oauth2/token"
@@ -208,18 +211,41 @@ class AuthService:
     async def get_account_info(self) -> dict:
         """Fetch the current user's account info via the API.
 
+        Also caches namespace IDs from the response if not already stored,
+        so team accounts get the correct path-root header on future requests.
+
         Returns:
             Dict with account_id, display_name, email.
         """
         client = self.get_http_client()
         async with client:
             result = await client.rpc("users/get_current_account")
+            self._update_token_namespace(client._token, result.get("root_info", {}))
             name = result.get("name", {})
             return {
                 "account_id": result.get("account_id", ""),
                 "display_name": name.get("display_name", ""),
                 "email": result.get("email", ""),
             }
+
+    def _update_token_namespace(self, token: AuthToken, root_info: dict) -> None:
+        """Extract namespace IDs from root_info and persist if not already stored."""
+        if token.root_namespace_id and token.home_namespace_id:
+            return  # Already cached
+        root_ns = root_info.get("root_namespace_id")
+        home_ns = root_info.get("home_namespace_id")
+        if root_ns:
+            updated = AuthToken(
+                access_token=token.access_token,
+                refresh_token=token.refresh_token,
+                expires_at=token.expires_at,
+                account_id=token.account_id,
+                uid=token.uid,
+                token_type=token.token_type,
+                root_namespace_id=root_ns,
+                home_namespace_id=home_ns,
+            )
+            self.save_token(updated)
 
     async def detect_and_cache_namespace(self) -> None:
         """Detect team/personal namespace and persist to token.
@@ -241,20 +267,6 @@ class AuthService:
             )
             async with client:
                 result = await client.rpc("users/get_current_account")
-                root_info = result.get("root_info", {})
-                root_ns = root_info.get("root_namespace_id")
-                home_ns = root_info.get("home_namespace_id")
-                if root_ns:
-                    updated = AuthToken(
-                        access_token=client._token.access_token,
-                        refresh_token=client._token.refresh_token,
-                        expires_at=client._token.expires_at,
-                        account_id=client._token.account_id,
-                        uid=client._token.uid,
-                        token_type=client._token.token_type,
-                        root_namespace_id=root_ns,
-                        home_namespace_id=home_ns,
-                    )
-                    self.save_token(updated)
-        except Exception:
-            pass
+                self._update_token_namespace(client._token, result.get("root_info", {}))
+        except Exception as exc:
+            logger.warning("Failed to detect namespace: %s", exc)

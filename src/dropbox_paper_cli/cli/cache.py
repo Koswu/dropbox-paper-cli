@@ -24,8 +24,20 @@ cache_app = typer.Typer(name="cache", help="Local metadata cache and search.", n
 def _get_cache_service(db: CacheDatabase) -> CacheService:
     """Get a CacheService with an authenticated HTTP client. Patched in tests."""
     svc = _get_auth_service()
+    _ensure_namespace(svc)
     client = svc.get_http_client()
     return CacheService(conn=db.conn, client=client)
+
+
+def _ensure_namespace(svc) -> None:
+    """Detect and cache team namespace if not already present in the token.
+
+    Must run before get_http_client() so the client gets the up-to-date token
+    with namespace IDs for the Dropbox-API-Path-Root header.
+    """
+    token = svc.load_token()
+    if token and not token.root_namespace_id:
+        asyncio.run(svc.detect_and_cache_namespace())
 
 
 _PHASE_LABELS = {
