@@ -1,6 +1,6 @@
 [project]
 name = "dropbox-paper-cli"
-version = "0.5.0"
+version = "0.5.1"
 description = "CLI tool for Dropbox Paper: async file operations, Paper doc management, local metadata cache with keyword search, and interactive TUI"
 requires-python = ">=3.12"
 license = "MIT"
