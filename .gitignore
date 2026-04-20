@@ -47,3 +47,4 @@ htmlcov/
 config.json
 .paper_cache.db
 cache.db
+perf.data
