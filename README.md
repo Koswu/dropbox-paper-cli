@@ -14,15 +14,16 @@ A Python CLI tool for managing Dropbox Paper documents from the terminal — bro
 - **Paper Doc Creation** — create new Paper documents from Markdown, HTML, or plain text
 - **Paper Doc Updates** — overwrite, append, prepend, or revision-safe update existing Paper documents
 - **Paper Doc Export** — read Paper documents as Markdown directly in your terminal
-- **Local Cache & Search** — sync your full Dropbox directory tree to a local SQLite database for instant keyword search with full CJK support
+- **Local Cache & Search** — sync your full Dropbox directory tree to a local SQLite database for instant keyword search with full CJK support, multi-keyword AND matching, and regex patterns
 - **Paper Doc Discovery** — discovers all Paper 2.0 documents including those in team Paper folders
 - **URL Resolution** — every cached item gets a web URL (constructed for files, sharing links for Paper docs)
-- **Interactive TUI Search** — Textual-powered interactive search with F2 to copy link, F3 to open in browser
+- **Interactive TUI Search** — Textual-powered interactive search with F2 to copy link, F3 to open in browser, F5 to toggle regex mode
 - **Adaptive Concurrency** — starts conservatively and ramps up, automatically backs off on 429 rate limits
 - **Two-Level Parallel Sync** — expands top-level folders one level deep for dramatically higher parallelism (3x faster on large workspaces)
 - **Rich Progress Display** — multi-phase progress bar showing metadata, preview URLs, and sharing link sync stages
 - **Team Account Support** — automatic namespace detection for Dropbox Business accounts
 - **Cross-Platform** — works on Linux, macOS, and Windows with platform-aware config paths
+- **SOCKS Proxy** — built-in SOCKS5/SOCKS4 proxy support via `HTTPS_PROXY` / `ALL_PROXY` environment variables
 - **JSON Output** — `--json` flag on all commands for scripting
 - **Verbose Logging** — `--verbose` flag for diagnostic output on all commands
 
@@ -107,6 +108,20 @@ paper cache sync
 paper cache search "meeting notes"
 ```
 
+## Proxy Support
+
+The CLI supports HTTP and SOCKS proxies via standard environment variables:
+
+```bash
+# HTTP/HTTPS proxy
+export HTTPS_PROXY=http://proxy.example.com:8080
+
+# SOCKS5 proxy
+export ALL_PROXY=socks5://127.0.0.1:1080
+```
+
+SOCKS5/SOCKS4 support is built-in (via `httpx[socks]`). No additional configuration is needed.
+
 ## Commands
 
 ### Authentication
@@ -182,7 +197,10 @@ paper cache sync --path "/subfolder" # Sync specific subtree
 paper cache sync --concurrency 10    # Custom worker count
 
 paper cache search QUERY             # Search by keyword
-paper cache search QUERY --url        # Show URL for each result
+paper cache search "meeting notes"   # Multi-keyword: AND logic (both must match)
+paper cache search QUERY --regex     # Regex pattern search
+paper cache search "Q\d+" --regex    # Example: match Q1, Q2, Q3...
+paper cache search QUERY --url       # Show URL for each result
 paper cache search QUERY --type paper   # Filter: paper docs only
 paper cache search QUERY --type folder  # Filter: folders only
 paper cache search QUERY --type file    # Filter: regular files only
@@ -199,6 +217,7 @@ paper cache isearch "initial query"  # Open TUI with pre-filled query
 | Enter | Move focus to results table |
 | F2 | Copy link to clipboard |
 | F3 | Open in browser |
+| F5 | Toggle regex mode |
 | Escape | Quit |
 
 ### Sharing
@@ -223,7 +242,7 @@ paper --version       # Show version
 - **Sync Pipeline**: root listing → shallow expansion → parallel recursive on sub-folders, with per-folder cursors for efficient incremental sync
 - **CLI**: Typer-based commands with `run_with_client()` helper for consistent async execution
 - **TUI**: Textual-powered interactive search app with clipboard integration and browser launch
-- **Cache**: SQLite with LIKE keyword search (full CJK support), WAL mode, indexed `path_lower` for fast subtree operations
+- **Cache**: SQLite with LIKE keyword search (full CJK support, multi-keyword AND, regex via Python `re`), WAL mode, indexed `path_lower` for fast subtree operations
 
 ## Data Storage
 
