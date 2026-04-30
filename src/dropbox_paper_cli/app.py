@@ -14,6 +14,28 @@ from dropbox_paper_cli.cli.config import config_app
 from dropbox_paper_cli.cli.files import files_app
 from dropbox_paper_cli.cli.sharing import sharing_app
 
+
+def _sanitize_no_proxy() -> None:
+    # httpx/urllib don't accept IPv6 (especially CIDR like `::ffff:0:0:0:0/1`)
+    # in no_proxy and crash with `Invalid port: ...`. Some macOS proxy clients
+    # write such entries by default; strip anything containing `::`.
+    for key in ("no_proxy", "NO_PROXY"):
+        raw = os.environ.get(key)
+        if not raw:
+            continue
+        entries = [e.strip() for e in raw.split(",")]
+        kept = [e for e in entries if e and "::" not in e]
+        if len(kept) == len([e for e in entries if e]):
+            continue
+        if kept:
+            os.environ[key] = ",".join(kept)
+        else:
+            os.environ.pop(key, None)
+
+
+_sanitize_no_proxy()
+
+
 app = typer.Typer(
     name="paper",
     help="Dropbox Paper CLI — manage Paper documents from the terminal.",
