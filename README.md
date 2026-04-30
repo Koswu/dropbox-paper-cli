@@ -8,7 +8,7 @@ A Python CLI tool for managing Dropbox Paper documents from the terminal — bro
 
 ## Features
 
-- **OAuth2 Authentication** — PKCE flow with automatic token refresh
+- **OAuth2 Authentication** — PKCE flow with automatic token refresh, optional `--loopback` for paste-free login
 - **Async HTTP** — built on httpx with concurrent API requests and token auto-refresh
 - **File Operations** — list, create, read, write, move, copy, delete, create folders, get sharing links
 - **Paper Doc Creation** — create new Paper documents from Markdown, HTML, or plain text
@@ -87,7 +87,17 @@ Environment variables `DROPBOX_APP_KEY` / `DROPBOX_APP_SECRET` take priority ove
 paper auth login
 ```
 
-Follow the browser prompt to authorize the app.
+Follow the browser prompt to authorize the app, then paste the authorization code back into the terminal.
+
+#### Loopback (paste-free) login
+
+Add `--loopback` to skip the manual paste — the CLI starts a one-shot local HTTP server on port `53682` and captures the auth code from the redirect:
+
+```bash
+paper auth login --loopback
+```
+
+This requires registering `http://localhost:53682/` as a Redirect URI in your Dropbox app's settings (App Console → your app → Settings → OAuth 2 → Redirect URIs).
 
 ## Quick Start
 
@@ -127,9 +137,11 @@ SOCKS5/SOCKS4 support is built-in (via `httpx[socks]`). No additional configurat
 ### Authentication
 
 ```bash
-paper auth login     # OAuth2 login flow
-paper auth logout    # Clear stored credentials
-paper auth status    # Check authentication state
+paper auth login                # OAuth2 login flow (paste auth code)
+paper auth login --loopback     # Capture auth code via http://localhost:53682/ redirect
+paper auth login --flow code    # Use Authorization Code flow (requires app_secret)
+paper auth logout               # Clear stored credentials
+paper auth status               # Check authentication state
 ```
 
 ### Configuration
