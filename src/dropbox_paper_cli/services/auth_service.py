@@ -63,36 +63,43 @@ class AuthService:
         self._app_key = app_key or get_app_key()
         self._code_verifier: str | None = None
         self._flow_type: str | None = None
+        self._redirect_uri: str | None = None
 
     # ── OAuth2 Flows ──────────────────────────────────────────────
 
-    def start_pkce_flow(self) -> str:
+    def start_pkce_flow(self, redirect_uri: str | None = None) -> str:
         """Start OAuth2 PKCE flow. Returns the authorization URL."""
         verifier, challenge = _generate_pkce_pair()
         self._code_verifier = verifier
         self._flow_type = "pkce"
-        params = {
+        self._redirect_uri = redirect_uri
+        params: dict = {
             "client_id": self._app_key,
             "response_type": "code",
             "code_challenge": challenge,
             "code_challenge_method": "S256",
             "token_access_type": "offline",
         }
+        if redirect_uri:
+            params["redirect_uri"] = redirect_uri
         return f"{_AUTH_BASE_URL}?{urlencode(params)}"
 
-    def start_auth_code_flow(self) -> str:
+    def start_auth_code_flow(self, redirect_uri: str | None = None) -> str:
         """Start OAuth2 Authorization Code flow. Returns the authorization URL."""
         app_secret = get_app_secret()
         if app_secret:
             self._flow_type = "auth_code"
+            self._redirect_uri = redirect_uri
         else:
             # Fall back to PKCE
-            return self.start_pkce_flow()
-        params = {
+            return self.start_pkce_flow(redirect_uri=redirect_uri)
+        params: dict = {
             "client_id": self._app_key,
             "response_type": "code",
             "token_access_type": "offline",
         }
+        if redirect_uri:
+            params["redirect_uri"] = redirect_uri
         return f"{_AUTH_BASE_URL}?{urlencode(params)}"
 
     async def finish_flow(self, auth_code: str) -> AuthToken:
@@ -116,6 +123,8 @@ class AuthService:
             app_secret = get_app_secret()
             if app_secret:
                 data["client_secret"] = app_secret
+        if self._redirect_uri:
+            data["redirect_uri"] = self._redirect_uri
 
         async with httpx.AsyncClient() as client:
             response = await client.post(_TOKEN_URL, data=data)
