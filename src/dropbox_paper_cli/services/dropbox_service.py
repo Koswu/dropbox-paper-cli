@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from dropbox_paper_cli.lib.errors import ValidationError
+from dropbox_paper_cli.lib.errors import PermissionError, ValidationError
 from dropbox_paper_cli.models.items import DropboxItem, PaperCreateResult, PaperUpdateResult
 
 if TYPE_CHECKING:
@@ -152,11 +152,38 @@ class DropboxService:
     # ── URL Resolution ────────────────────────────────────────────
 
     async def resolve_shared_link_url(self, url: str) -> str:
-        """Resolve a Dropbox shared link URL to a file/folder ID."""
+        """Resolve a Dropbox shared link URL to a file/folder ID.
+
+        Raises PermissionError when the link points to a file in another
+        user's personal namespace, where ``files/export`` and ``files/get_metadata``
+        cannot reach it.
+        """
         result = await self._client.rpc(
             "sharing/get_shared_link_metadata",
             {"url": url},
         )
+        # When the file lives in another user's personal namespace the
+        # Dropbox API returns metadata (id, name, team_member_info) but
+        # omits path_lower because the file is not in the caller's tree.
+        # files/export then 409s with path/not_found. Detect this here so
+        # we can give the user actionable guidance instead.
+        if result.get(".tag") == "file" and "path_lower" not in result:
+            owner_info = result.get("team_member_info") or {}
+            owner = owner_info.get("display_name")
+            name = result.get("name") or "this document"
+            owner_clause = f" (owned by {owner})" if owner else ""
+            raise PermissionError(
+                f"Cannot read {name!r} via this shared link{owner_clause}: "
+                "the file lives in another user's personal Dropbox namespace, "
+                "and Dropbox's public API does not expose export/metadata for "
+                "Paper docs outside your own namespace.\n"
+                "Workarounds:\n"
+                "  1. Open the link in a browser and click "
+                "'Save to my Dropbox' / '保存到 Dropbox', then read it by "
+                "its new path.\n"
+                "  2. Ask the owner to move the file into a shared team folder.",
+                code="CROSS_NAMESPACE_SHARED_LINK",
+            )
         return result["id"]
 
     # ── Write Content ─────────────────────────────────────────────

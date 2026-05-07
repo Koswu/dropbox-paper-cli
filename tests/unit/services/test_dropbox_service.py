@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from dropbox_paper_cli.lib.errors import NotFoundError, ValidationError
+from dropbox_paper_cli.lib.errors import NotFoundError, PermissionError, ValidationError
 from dropbox_paper_cli.services.dropbox_service import DropboxService
 
 
@@ -298,6 +298,57 @@ class TestExportPaperContent:
 
         with pytest.raises(ValidationError):
             await service.export_paper_content("/image.png")
+
+
+class TestResolveSharedLinkUrl:
+    """resolve_shared_link_url returns id or raises a friendly error for cross-namespace links."""
+
+    async def test_returns_id_for_owned_file(self, service, mock_client):
+        mock_client.rpc.return_value = {
+            ".tag": "file",
+            "id": "id:abc123",
+            "name": "mine.paper",
+            "path_lower": "/mine.paper",
+        }
+
+        result = await service.resolve_shared_link_url(
+            "https://www.dropbox.com/scl/fi/x/mine.paper?rlkey=k"
+        )
+
+        assert result == "id:abc123"
+
+    async def test_raises_for_cross_namespace_file(self, service, mock_client):
+        # Files in another user's personal namespace come back without path_lower.
+        mock_client.rpc.return_value = {
+            ".tag": "file",
+            "id": "id:fakeid",
+            "name": "shared.paper",
+            "team_member_info": {"display_name": "Owner Name", "member_id": "dbmid:fake"},
+        }
+
+        with pytest.raises(PermissionError) as exc_info:
+            await service.resolve_shared_link_url(
+                "https://www.dropbox.com/scl/fi/fake/shared.paper?rlkey=fake"
+            )
+
+        message = str(exc_info.value)
+        assert "shared.paper" in message
+        assert "Owner Name" in message
+        assert "Save to my Dropbox" in message
+        assert exc_info.value.code == "CROSS_NAMESPACE_SHARED_LINK"
+
+    async def test_returns_id_for_folder_link(self, service, mock_client):
+        # Folder links don't have path_lower either, but the cross-namespace
+        # check only fires for files — folders go through other code paths.
+        mock_client.rpc.return_value = {
+            ".tag": "folder",
+            "id": "id:folder123",
+            "name": "Shared",
+        }
+
+        result = await service.resolve_shared_link_url("https://www.dropbox.com/sh/x/y")
+
+        assert result == "id:folder123"
 
 
 # ── Write Content ────────────────────────────────────────────────
