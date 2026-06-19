@@ -5,8 +5,13 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from dropbox_paper_cli.lib.errors import PermissionError, ValidationError
-from dropbox_paper_cli.models.items import DropboxItem, PaperCreateResult, PaperUpdateResult
+from dropbox_paper_cli.lib.errors import AppError, PermissionError, ValidationError
+from dropbox_paper_cli.models.items import (
+    DocumentOwnership,
+    DropboxItem,
+    PaperCreateResult,
+    PaperUpdateResult,
+)
 
 if TYPE_CHECKING:
     from dropbox_paper_cli.lib.http_client import DropboxHttpClient
@@ -72,6 +77,55 @@ class DropboxService:
     async def _get_metadata_raw(self, path: str) -> dict:
         """Fetch raw metadata dict from Dropbox API."""
         return await self._client.rpc("files/get_metadata", {"path": path})
+
+    async def get_ownership(
+        self, file_id: str, *, modified_by: str | None = None
+    ) -> DocumentOwnership:
+        """Resolve author/owner information for a file.
+
+        Dropbox's public API does not expose a Paper document's original
+        creator, so this gathers the closest reliable signals: the file owner(s)
+        from ``sharing/get_file_metadata`` and the display name of the last
+        modifier (``sharing_info.modified_by``, passed in via *modified_by*).
+
+        Args:
+            file_id: A Dropbox file id (``id:...``). ``sharing/get_file_metadata``
+                does not accept plain paths.
+            modified_by: Account id of the last modifier, if known.
+
+        Returns:
+            DocumentOwnership. Fields degrade to empty/None when the sharing
+            metadata or an account lookup is unavailable rather than raising.
+        """
+        owner_names: list[str] = []
+        owner_team: str | None = None
+        is_self_owned = False
+        try:
+            meta = await self._client.rpc("sharing/get_file_metadata", {"file": file_id})
+            owner_names = meta.get("owner_display_names") or []
+            owner_team = (meta.get("owner_team") or {}).get("name")
+            is_self_owned = (meta.get("access_type") or {}).get(".tag") == "owner"
+        except AppError:
+            # File is not shareable (e.g. cross-namespace) or sharing.read scope
+            # is missing — fall back to whatever the last-editor lookup yields.
+            pass
+
+        last_edited_by = await self._resolve_account_name(modified_by) if modified_by else None
+
+        return DocumentOwnership(
+            owner_names=owner_names,
+            owner_team=owner_team,
+            is_self_owned=is_self_owned,
+            last_edited_by=last_edited_by,
+        )
+
+    async def _resolve_account_name(self, account_id: str) -> str | None:
+        """Resolve a Dropbox account id to its display name, or None on failure."""
+        try:
+            account = await self._client.rpc("users/get_account", {"account_id": account_id})
+        except AppError:
+            return None
+        return (account.get("name") or {}).get("display_name") or account_id
 
     async def get_or_create_sharing_link(self, path: str) -> dict[str, str]:
         """Get or create a sharing link for a file.

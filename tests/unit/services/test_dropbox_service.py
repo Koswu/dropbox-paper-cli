@@ -11,6 +11,24 @@ from dropbox_paper_cli.lib.errors import NotFoundError, PermissionError, Validat
 from dropbox_paper_cli.services.dropbox_service import DropboxService
 
 
+def _file_metadata_entry(
+    *,
+    owner_display_names=None,
+    owner_team_name="Acme",
+    access_type="editor",
+) -> dict:
+    """A sharing/get_file_metadata response with adjustable owner fields."""
+    entry: dict = {
+        "id": "id:file1",
+        "name": "test.paper",
+        "owner_display_names": owner_display_names if owner_display_names is not None else [],
+        "access_type": {".tag": access_type},
+    }
+    if owner_team_name is not None:
+        entry["owner_team"] = {"id": "dbtid:abc", "name": owner_team_name}
+    return entry
+
+
 @pytest.fixture
 def mock_client():
     """Provide an AsyncMock standing in for DropboxHttpClient."""
@@ -151,6 +169,66 @@ class TestGetMetadata:
 
         with pytest.raises(NotFoundError):
             await service.get_metadata("/nonexistent")
+
+
+class TestGetOwnership:
+    """get_ownership assembles owner + last-editor info from sharing metadata."""
+
+    async def test_team_owned_with_last_editor(self, service, mock_client):
+        mock_client.rpc.side_effect = [
+            _file_metadata_entry(owner_display_names=[], owner_team_name="Acme"),
+            {"name": {"display_name": "Jane Doe"}},  # users/get_account
+        ]
+
+        own = await service.get_ownership("id:file1", modified_by="dbid:editor")
+        assert own.owner_team == "Acme"
+        assert own.owner_names == []
+        assert own.is_self_owned is False
+        assert own.last_edited_by == "Jane Doe"
+        assert own.owner_label() == "Acme (team)"
+        mock_client.rpc.assert_any_call("sharing/get_file_metadata", {"file": "id:file1"})
+        mock_client.rpc.assert_any_call("users/get_account", {"account_id": "dbid:editor"})
+
+    async def test_explicit_owner_names(self, service, mock_client):
+        mock_client.rpc.return_value = _file_metadata_entry(
+            owner_display_names=["Owner One"], access_type="owner"
+        )
+
+        own = await service.get_ownership("id:file1")
+        assert own.owner_names == ["Owner One"]
+        assert own.is_self_owned is True
+        assert own.last_edited_by is None
+        assert own.owner_label() == "Owner One"
+
+    async def test_no_modified_by_skips_account_lookup(self, service, mock_client):
+        mock_client.rpc.return_value = _file_metadata_entry()
+
+        await service.get_ownership("id:file1")
+        # Only sharing/get_file_metadata should be called, not users/get_account.
+        mock_client.rpc.assert_called_once_with("sharing/get_file_metadata", {"file": "id:file1"})
+
+    async def test_sharing_metadata_unavailable_degrades(self, service, mock_client):
+        mock_client.rpc.side_effect = [
+            PermissionError("Access denied"),  # sharing/get_file_metadata fails
+            {"name": {"display_name": "Last Editor"}},  # users/get_account still works
+        ]
+
+        own = await service.get_ownership("id:file1", modified_by="dbid:editor")
+        assert own.owner_names == []
+        assert own.owner_team is None
+        assert own.is_self_owned is False
+        assert own.last_edited_by == "Last Editor"
+        assert own.owner_label() is None
+
+    async def test_account_lookup_failure_is_swallowed(self, service, mock_client):
+        mock_client.rpc.side_effect = [
+            _file_metadata_entry(owner_team_name="Acme"),
+            NotFoundError("account not found"),  # users/get_account fails
+        ]
+
+        own = await service.get_ownership("id:file1", modified_by="dbid:editor")
+        assert own.last_edited_by is None
+        assert own.owner_label() == "Acme (team)"
 
 
 class TestGetOrCreateSharingLink:

@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 
 from dropbox_paper_cli.app import app
 from dropbox_paper_cli.lib.errors import AuthenticationError, NotFoundError, ValidationError
-from dropbox_paper_cli.models.items import DropboxItem
+from dropbox_paper_cli.models.items import DocumentOwnership, DropboxItem
 
 
 @pytest.fixture
@@ -38,6 +38,7 @@ def mock_dropbox_service():
     svc = MagicMock()
     svc.list_folder = AsyncMock(return_value=[])
     svc.get_metadata = AsyncMock()
+    svc.get_ownership = AsyncMock(return_value=DocumentOwnership())
     svc.get_or_create_sharing_link = AsyncMock()
     svc.resolve_shared_link_url = AsyncMock()
     svc.export_paper_content = AsyncMock()
@@ -190,6 +191,41 @@ class TestFilesMetadata:
 
         result = runner.invoke(app, ["files", "metadata", "/nonexistent"])
         assert result.exit_code == 3
+
+    def test_metadata_shows_owner_and_editor(self, runner, mock_dropbox_service):
+        mock_dropbox_service.get_metadata.return_value = _make_item()
+        mock_dropbox_service.get_ownership.return_value = DocumentOwnership(
+            owner_team="Acme", last_edited_by="Jane Doe"
+        )
+
+        result = runner.invoke(app, ["files", "metadata", "/Meeting Notes.paper"])
+        assert result.exit_code == 0
+        assert "Owner:    Acme (team)" in result.stdout
+        assert "Edited by: Jane Doe" in result.stdout
+        mock_dropbox_service.get_ownership.assert_called_once_with("id:abc123", modified_by=None)
+
+    def test_metadata_json_includes_owner(self, runner, mock_dropbox_service):
+        mock_dropbox_service.get_metadata.return_value = _make_item()
+        mock_dropbox_service.get_ownership.return_value = DocumentOwnership(
+            owner_names=["Jane Doe"], owner_team="Acme", is_self_owned=False
+        )
+
+        result = runner.invoke(app, ["--json", "files", "metadata", "/test.paper"])
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        assert data["owner"] == "Jane Doe"
+        assert data["owner_names"] == ["Jane Doe"]
+        assert data["owner_team"] == "Acme"
+
+    def test_metadata_folder_skips_ownership(self, runner, mock_dropbox_service):
+        mock_dropbox_service.get_metadata.return_value = _make_item(
+            id="id:folder1", name="Docs", path_display="/Docs", item_type="folder"
+        )
+
+        result = runner.invoke(app, ["files", "metadata", "/Docs"])
+        assert result.exit_code == 0
+        assert "Owner:" not in result.stdout
+        mock_dropbox_service.get_ownership.assert_not_called()
 
 
 class TestFilesLink:

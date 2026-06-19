@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -20,6 +20,7 @@ class DropboxItem:
     server_modified: datetime | None = None
     rev: str | None = None
     content_hash: str | None = None
+    modified_by: str | None = None  # account id of the last user to modify the file
 
     @property
     def is_paper(self) -> bool:
@@ -60,7 +61,33 @@ class DropboxItem:
                 server_modified=server_modified,
                 rev=data.get("rev"),
                 content_hash=data.get("content_hash"),
+                modified_by=data.get("sharing_info", {}).get("modified_by"),
             )
+
+
+@dataclass
+class DocumentOwnership:
+    """Author/owner information for a file, assembled from sharing metadata.
+
+    Dropbox's public API does not expose a Paper document's original creator,
+    so this captures the closest reliable signals: the file's owner(s) and the
+    display name of the last user to modify it.
+    """
+
+    owner_names: list[str] = field(default_factory=list)  # explicit owner display name(s)
+    owner_team: str | None = None  # owning team name, when the file is team-owned
+    is_self_owned: bool = False  # the authenticated account owns this file
+    last_edited_by: str | None = None  # display name of the last modifier
+
+    def owner_label(self) -> str | None:
+        """Best human-readable owner string, or None if nothing is known."""
+        if self.owner_names:
+            return ", ".join(self.owner_names)
+        if self.is_self_owned:
+            return "you"
+        if self.owner_team:
+            return f"{self.owner_team} (team)"
+        return None
 
 
 @dataclass

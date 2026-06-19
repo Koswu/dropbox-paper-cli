@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from dropbox_paper_cli.models.items import DropboxItem, PaperDocument
+from dropbox_paper_cli.models.items import DocumentOwnership, DropboxItem, PaperDocument
 
 
 class TestDropboxItem:
@@ -77,6 +77,21 @@ class TestDropboxItem:
         assert item.id == "id:f1"
         assert item.type == "file"
         assert item.size == 5000
+        assert item.modified_by is None
+
+    def test_from_file_metadata_modified_by(self):
+        """from_api extracts sharing_info.modified_by into modified_by."""
+        api_dict = {
+            ".tag": "file",
+            "id": "id:f1",
+            "name": "Report.paper",
+            "path_display": "/Report.paper",
+            "path_lower": "/report.paper",
+            "sharing_info": {"modified_by": "dbid:AAAlasteditor", "read_only": False},
+        }
+
+        item = DropboxItem.from_api(api_dict)
+        assert item.modified_by == "dbid:AAAlasteditor"
 
     def test_from_folder_metadata(self):
         """from_api creates a DropboxItem from a Dropbox API JSON dict (folder)."""
@@ -108,3 +123,27 @@ class TestPaperDocument:
         )
         assert doc.content_markdown == "# Meeting Notes\n\nDiscussion points..."
         assert doc.is_paper is True
+
+
+class TestDocumentOwnership:
+    """DocumentOwnership picks the best available owner label."""
+
+    def test_owner_label_prefers_explicit_names(self):
+        own = DocumentOwnership(
+            owner_names=["Jane Doe", "John Roe"],
+            owner_team="Acme",
+            is_self_owned=False,
+        )
+        assert own.owner_label() == "Jane Doe, John Roe"
+
+    def test_owner_label_self_owned(self):
+        own = DocumentOwnership(owner_names=[], owner_team="Acme", is_self_owned=True)
+        assert own.owner_label() == "you"
+
+    def test_owner_label_team_fallback(self):
+        own = DocumentOwnership(owner_names=[], owner_team="Acme", is_self_owned=False)
+        assert own.owner_label() == "Acme (team)"
+
+    def test_owner_label_unknown(self):
+        own = DocumentOwnership()
+        assert own.owner_label() is None

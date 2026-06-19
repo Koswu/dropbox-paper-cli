@@ -80,19 +80,29 @@ def metadata(
             fmt.verbose(f"Resolved to {resolved!r}")
             item = await svc.get_metadata(resolved)
 
+            # Author/owner info is only meaningful for files. Dropbox's API has
+            # no "original creator" field, so we surface owner + last editor.
+            ownership = None
+            if item.type == "file":
+                ownership = await svc.get_ownership(item.id, modified_by=item.modified_by)
+
             if fmt.json_mode:
-                fmt.success(
-                    {
-                        "id": item.id,
-                        "name": item.name,
-                        "path": item.path_display,
-                        "type": item.type,
-                        "size": item.size,
-                        "modified": str(item.server_modified) if item.server_modified else None,
-                        "rev": item.rev,
-                        "content_hash": item.content_hash,
-                    }
-                )
+                payload: dict[str, object] = {
+                    "id": item.id,
+                    "name": item.name,
+                    "path": item.path_display,
+                    "type": item.type,
+                    "size": item.size,
+                    "modified": str(item.server_modified) if item.server_modified else None,
+                    "rev": item.rev,
+                    "content_hash": item.content_hash,
+                }
+                if ownership is not None:
+                    payload["owner"] = ownership.owner_label()
+                    payload["owner_names"] = ownership.owner_names
+                    payload["owner_team"] = ownership.owner_team
+                    payload["last_edited_by"] = ownership.last_edited_by
+                fmt.success(payload)
             else:
                 typer.echo(f"Name:     {item.name}")
                 typer.echo(f"Type:     {item.type}")
@@ -100,8 +110,12 @@ def metadata(
                 typer.echo(f"ID:       {item.id}")
                 if item.size is not None:
                     typer.echo(f"Size:     {item.size:,} bytes")
+                if ownership is not None and ownership.owner_label():
+                    typer.echo(f"Owner:    {ownership.owner_label()}")
                 if item.server_modified:
                     typer.echo(f"Modified: {item.server_modified}")
+                if ownership is not None and ownership.last_edited_by:
+                    typer.echo(f"Edited by: {ownership.last_edited_by}")
                 if item.rev:
                     typer.echo(f"Rev:      {item.rev}")
 

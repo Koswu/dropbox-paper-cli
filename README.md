@@ -157,7 +157,7 @@ paper config path                    # Show config file path
 
 ```bash
 paper files list [PATH]              # List files and folders
-paper files metadata PATH            # Get detailed metadata
+paper files metadata PATH            # Get detailed metadata (incl. owner / last editor)
 paper files read PATH                # Read Paper doc as Markdown
 paper files create PATH              # Create a new Paper document
 paper files write PATH               # Update a Paper document

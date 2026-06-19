@@ -189,9 +189,17 @@ Type:     file
 Path:     /Project Notes/Meeting Notes.paper
 ID:       id:abc123
 Size:     12,700 bytes
+Owner:    Jane Doe
 Modified: 2025-07-18T09:00:00Z
+Edited by: John Roe
 Rev:      015f2b3c4d5e6
 ```
+
+The `Owner` and `Edited by` lines appear only for files (not folders) and are
+omitted when the information is unavailable. Dropbox's public API does not
+expose a Paper document's original creator, so `Owner` reflects the file owner
+(an explicit owner display name, `you` when you own it, or the owning team) and
+`Edited by` reflects the last user to modify the file.
 
 **Stdout (`--json`)**:
 ```json
@@ -203,9 +211,15 @@ Rev:      015f2b3c4d5e6
   "size": 12700,
   "modified": "2025-07-18T09:00:00Z",
   "rev": "015f2b3c4d5e6",
-  "content_hash": "a1b2c3..."
+  "content_hash": "a1b2c3...",
+  "owner": "Jane Doe",
+  "owner_names": ["Jane Doe"],
+  "owner_team": "Acme, Inc.",
+  "last_edited_by": "John Roe"
 }
 ```
+
+For folders, the `owner*` and `last_edited_by` fields are absent.
 
 ### `paper files read`
 
