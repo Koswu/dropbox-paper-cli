@@ -74,7 +74,7 @@ wheels = [
 
 [[package]]
 name = "dropbox-paper-cli"
-version = "0.5.9"
+version = "0.5.10"
 source = { editable = "." }
 dependencies = [
     { name = "httpx", extra = ["socks"] },
