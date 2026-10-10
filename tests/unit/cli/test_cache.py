@@ -346,13 +346,19 @@ class TestCacheSearch:
         with patch("dropbox_paper_cli.tui.search.run_search_tui") as mock_run:
             result = runner.invoke(app, ["cache", "isearch", "hello"])
             assert result.exit_code == 0
-            mock_run.assert_called_once_with(initial_query="hello")
+            mock_run.assert_called_once_with(initial_query="hello", mouse=None)
 
     def test_isearch_launches_tui_no_query(self, runner):
         with patch("dropbox_paper_cli.tui.search.run_search_tui") as mock_run:
             result = runner.invoke(app, ["cache", "isearch"])
             assert result.exit_code == 0
-            mock_run.assert_called_once_with(initial_query="")
+            mock_run.assert_called_once_with(initial_query="", mouse=None)
+
+    def test_isearch_no_mouse(self, runner):
+        with patch("dropbox_paper_cli.tui.search.run_search_tui") as mock_run:
+            result = runner.invoke(app, ["cache", "isearch", "--no-mouse"])
+            assert result.exit_code == 0
+            mock_run.assert_called_once_with(initial_query="", mouse=False)
 
 
 class TestEnsureNamespace:
