@@ -121,3 +121,67 @@ class TestSearchApp:
         app = SearchApp(db_path=db_path, initial_query="")
         async with app.run_test() as pilot:
             await pilot.press("escape")
+
+
+class TestClipboard:
+    """_try_copy picks a clipboard backend that works on the host terminal."""
+
+    def test_uses_pbcopy_on_macos(self, tmp_path, monkeypatch):
+        from dropbox_paper_cli.tui import search
+
+        calls = []
+        monkeypatch.setattr(search.sys, "platform", "darwin")
+        monkeypatch.setattr(search.shutil, "which", lambda name: "/usr/bin/pbcopy")
+        monkeypatch.setattr(search.subprocess, "run", lambda *a, **kw: calls.append((a, kw)))
+        app = SearchApp(db_path=tmp_path / "test.db")
+        monkeypatch.setattr(app, "copy_to_clipboard", lambda text: pytest.fail("used OSC 52"))
+        monkeypatch.setattr(app, "notify", lambda *a, **kw: None)
+
+        app._try_copy("https://example.com/链接")
+
+        assert calls[0][0] == (["/usr/bin/pbcopy"],)
+        assert calls[0][1]["input"] == "https://example.com/链接".encode()
+
+    def test_uses_osc52_elsewhere(self, tmp_path, monkeypatch):
+        from dropbox_paper_cli.tui import search
+
+        copied = []
+        monkeypatch.setattr(search.sys, "platform", "linux")
+        app = SearchApp(db_path=tmp_path / "test.db")
+        monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
+        monkeypatch.setattr(app, "notify", lambda *a, **kw: None)
+
+        app._try_copy("https://example.com")
+
+        assert copied == ["https://example.com"]
+
+    def test_pbcopy_failure_falls_back_to_notification(self, tmp_path, monkeypatch):
+        from dropbox_paper_cli.tui import search
+
+        def boom(*a, **kw):
+            raise OSError("pbcopy missing")
+
+        notes = []
+        monkeypatch.setattr(search.sys, "platform", "darwin")
+        monkeypatch.setattr(search.shutil, "which", lambda name: "/usr/bin/pbcopy")
+        monkeypatch.setattr(search.subprocess, "run", boom)
+        app = SearchApp(db_path=tmp_path / "test.db")
+        monkeypatch.setattr(app, "notify", lambda msg, **kw: notes.append(msg))
+
+        app._try_copy("https://example.com")
+
+        assert notes == ["🔗 https://example.com"]
+
+
+class TestMouseSupport:
+    def test_disabled_in_apple_terminal(self, monkeypatch):
+        from dropbox_paper_cli.tui.search import _mouse_supported
+
+        monkeypatch.setenv("TERM_PROGRAM", "Apple_Terminal")
+        assert _mouse_supported() is False
+
+    def test_enabled_elsewhere(self, monkeypatch):
+        from dropbox_paper_cli.tui.search import _mouse_supported
+
+        monkeypatch.setenv("TERM_PROGRAM", "iTerm.app")
+        assert _mouse_supported() is True

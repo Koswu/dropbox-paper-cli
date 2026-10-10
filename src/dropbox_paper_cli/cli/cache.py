@@ -208,6 +208,11 @@ def search(
 def isearch(
     ctx: typer.Context,
     query: str = typer.Argument("", help="Optional initial search query"),
+    mouse: bool | None = typer.Option(
+        None,
+        "--mouse/--no-mouse",
+        help="Enable mouse support (default: auto, off in macOS Terminal)",
+    ),
 ) -> None:
     """Interactive TUI search over the local metadata cache.
 
@@ -225,4 +230,4 @@ def isearch(
 
     from dropbox_paper_cli.tui.search import run_search_tui  # noqa: PLC0415
 
-    run_search_tui(initial_query=query)
+    run_search_tui(initial_query=query, mouse=mouse)

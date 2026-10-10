@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
 import sqlite3
+import subprocess
 import sys
 import webbrowser
 from pathlib import Path
@@ -235,7 +238,13 @@ class SearchApp(App):
     def _try_copy(self, url: str) -> None:
         """Copy URL to clipboard with fallback notification on failure."""
         try:
-            self.copy_to_clipboard(url)
+            # Textual's copy_to_clipboard relies on OSC 52, which macOS Terminal ignores
+            # and iTerm2 disables by default, so prefer pbcopy on macOS.
+            pbcopy = shutil.which("pbcopy") if sys.platform == "darwin" else None
+            if pbcopy:
+                subprocess.run([pbcopy], input=url.encode("utf-8"), check=True, timeout=5)
+            else:
+                self.copy_to_clipboard(url)
             self.notify(f"✅ Copied: {url}", severity="information")
         except Exception:
             self.notify(f"🔗 {url}", severity="information")
@@ -324,9 +333,25 @@ class SearchApp(App):
             self.call_from_thread(self.notify, f"Error: {e}", severity="error")
 
 
-def run_search_tui(initial_query: str = "", db_path: Path | None = None) -> None:
-    """Launch the interactive search TUI."""
+def _mouse_supported() -> bool:
+    """Whether to enable mouse reporting in the current terminal.
+
+    macOS Terminal leaks mouse escape sequences into the input as garbage on click.
+    Disabling mouse there also restores native drag-to-select copying.
+    """
+    return os.environ.get("TERM_PROGRAM", "") != "Apple_Terminal"
+
+
+def run_search_tui(
+    initial_query: str = "",
+    db_path: Path | None = None,
+    mouse: bool | None = None,
+) -> None:
+    """Launch the interactive search TUI.
+
+    *mouse* of None auto-detects support from the terminal.
+    """
     app = SearchApp(db_path=db_path, initial_query=initial_query)
-    app.run()
+    app.run(mouse=_mouse_supported() if mouse is None else mouse)
     # Force exit: worker threads may still be blocking on network I/O
     sys.exit(0)
